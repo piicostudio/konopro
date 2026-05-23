@@ -1,0 +1,17 @@
+# standard gitignore files
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# gitignored due to potential copyright infringement
+research/data/private/*
+!research/data/private/.gitkeep
+
+# local Streamlit state.
+.streamlit/
