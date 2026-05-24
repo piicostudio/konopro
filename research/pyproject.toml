@@ -1,0 +1,37 @@
+[project]
+name = "konopro-research"
+version = "0.1.0"
+description = "Python research prototype for singing progress scoring."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "librosa>=0.10.2",
+  "matplotlib>=3.8",
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "plotly>=5.22",
+  "soundfile>=0.12",
+  "streamlit>=1.35",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+  "ruff>=0.5",
+]
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["notebooks"]

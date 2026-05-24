@@ -9,9 +9,22 @@ __pycache__/
 .mypy_cache/
 .ipynb_checkpoints/
 
-# gitignored due to potential copyright infringement
+# Local Python environments created inside the research prototype.
+research/.venv/
+
+# Generated demo artifacts. These can be recreated with:
+# cd research && uv run python scripts/generate_demo_data.py
+research/data/demo/*.wav
+research/data/demo/*.csv
+research/data/demo/metadata.json
+
+# Private local experiments may use copyrighted or personally recorded audio.
 research/data/private/*
 !research/data/private/.gitkeep
 
-# local Streamlit state.
+# Research scratch outputs that are useful locally but not core demo source.
+research/reports/
+research/notebooks/
+
+# Local Streamlit state.
 .streamlit/
