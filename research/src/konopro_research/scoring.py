@@ -59,10 +59,23 @@ class ComparisonResult:
 TakeInput = str | Path | PitchContour
 
 
-def score_take(take: TakeInput, baseline: MelodyBaseline, *, name: str = "take") -> ScoreResult:
-    contour, audio = _as_pitch_contour(take, name=name)
-    contour = clean_pitch_contour(contour)
-    alignment = estimate_global_offset(contour, baseline)
+def score_take(
+    take: TakeInput,
+    baseline: MelodyBaseline,
+    *,
+    name: str = "take",
+    pitch_kwargs: dict[str, object] | None = None,
+    clean_kwargs: dict[str, object] | None = None,
+    alignment_kwargs: dict[str, object] | None = None,
+    note_coverage_min_ratio: float = 0.35,
+    pitch_error_penalty: float = 0.70,
+    stability_penalty: float = 1.10,
+    timing_offset_penalty: float = 180.0,
+    transposition_warning_cents: float = 90.0,
+) -> ScoreResult:
+    contour, audio = _as_pitch_contour(take, name=name, pitch_kwargs=pitch_kwargs)
+    contour = clean_pitch_contour(contour, **(clean_kwargs or {}))
+    alignment = estimate_global_offset(contour, baseline, **(alignment_kwargs or {}))
     take_duration = _contour_duration(contour)
 
     reference_times = contour.times_s - alignment.offset_s
@@ -81,9 +94,9 @@ def score_take(take: TakeInput, baseline: MelodyBaseline, *, name: str = "take")
         estimated_transposition = float(np.nanmedian(signed_errors))
         errors = np.abs(signed_errors)
         mean_error = float(np.nanmean(errors))
-        pitch_score = _clamp_score(100.0 - mean_error * 0.70)
+        pitch_score = _clamp_score(100.0 - mean_error * pitch_error_penalty)
         semitone_shift = round(estimated_transposition / 100.0)
-        if abs(estimated_transposition) >= 90.0:
+        if abs(estimated_transposition) >= transposition_warning_cents:
             warnings.append(
                 f"take appears shifted by about {semitone_shift:+d} semitone(s); check key/transposition"
             )
@@ -92,18 +105,19 @@ def score_take(take: TakeInput, baseline: MelodyBaseline, *, name: str = "take")
         contour,
         baseline,
         alignment.offset_s,
+        min_voiced_ratio=note_coverage_min_ratio,
     )
     coverage_pct = 100.0 * covered_notes / max(1, total_notes)
     coverage_score = _clamp_score(coverage_pct)
 
     if note_stabilities:
         stability_cents = float(np.nanmedian(note_stabilities))
-        stability_score = _clamp_score(100.0 - stability_cents * 1.10)
+        stability_score = _clamp_score(100.0 - stability_cents * stability_penalty)
     else:
         stability_cents = 999.0
         stability_score = 0.0
 
-    timing_score = _clamp_score(100.0 - abs(alignment.offset_s) * 180.0)
+    timing_score = _clamp_score(100.0 - abs(alignment.offset_s) * timing_offset_penalty)
     confidence = estimate_recording_confidence(audio, contour)
     warnings.extend(confidence.reasons)
     if confidence.level == "low":
@@ -143,9 +157,14 @@ def score_take(take: TakeInput, baseline: MelodyBaseline, *, name: str = "take")
     )
 
 
-def compare_takes(previous: TakeInput, current: TakeInput, baseline: MelodyBaseline) -> ComparisonResult:
-    previous_score = score_take(previous, baseline, name="previous")
-    current_score = score_take(current, baseline, name="current")
+def compare_takes(
+    previous: TakeInput,
+    current: TakeInput,
+    baseline: MelodyBaseline,
+    **score_kwargs: object,
+) -> ComparisonResult:
+    previous_score = score_take(previous, baseline, name="previous", **score_kwargs)
+    current_score = score_take(current, baseline, name="current", **score_kwargs)
 
     overall_delta = round(current_score.overall_score - previous_score.overall_score, 2)
     pitch_delta = round(current_score.pitch_accuracy_score - previous_score.pitch_accuracy_score, 2)
@@ -175,17 +194,24 @@ def compare_takes(previous: TakeInput, current: TakeInput, baseline: MelodyBasel
     )
 
 
-def _as_pitch_contour(take: TakeInput, *, name: str) -> tuple[PitchContour, np.ndarray | None]:
+def _as_pitch_contour(
+    take: TakeInput,
+    *,
+    name: str,
+    pitch_kwargs: dict[str, object] | None = None,
+) -> tuple[PitchContour, np.ndarray | None]:
     if isinstance(take, PitchContour):
         return take, None
     audio, sample_rate = load_audio(take)
-    return extract_pitch(audio, sample_rate, name=name), audio
+    return extract_pitch(audio, sample_rate, name=name, **(pitch_kwargs or {})), audio
 
 
 def _note_coverage_and_stability(
     contour: PitchContour,
     baseline: MelodyBaseline,
     offset_s: float,
+    *,
+    min_voiced_ratio: float,
 ) -> tuple[int, int, list[float]]:
     covered = 0
     stabilities: list[float] = []
@@ -195,7 +221,7 @@ def _note_coverage_and_stability(
         voiced_in_note = in_note & contour.voiced_mask
         expected_count = max(1, np.count_nonzero(in_note))
         voiced_ratio = np.count_nonzero(voiced_in_note) / expected_count
-        if voiced_ratio >= 0.35 and np.count_nonzero(voiced_in_note) >= 3:
+        if voiced_ratio >= min_voiced_ratio and np.count_nonzero(voiced_in_note) >= 3:
             covered += 1
             errors = cents_difference(
                 contour.frequencies_hz[voiced_in_note],

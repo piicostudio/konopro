@@ -8,14 +8,15 @@ from konopro_research.pitch import PitchContour
 
 def plot_take_comparison(
     baseline: MelodyBaseline,
-    previous: PitchContour,
+    previous: PitchContour | None,
     current: PitchContour,
 ):
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(10, 4.8))
     _plot_baseline(ax, baseline)
-    _plot_contour(ax, previous, "Previous take", "#d97706")
+    if previous is not None:
+        _plot_contour(ax, previous, "Previous take", "#d97706")
     _plot_contour(ax, current, "Current take", "#2563eb")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Pitch (MIDI note)")
@@ -28,14 +29,15 @@ def plot_take_comparison(
 
 def plot_contour_comparison(
     reference: PitchContour,
-    previous: PitchContour,
+    previous: PitchContour | None,
     current: PitchContour,
 ):
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(10, 4.8))
     _plot_contour(ax, reference, "Reference contour", "#111827", linewidth=2.0)
-    _plot_contour(ax, previous, "Previous take", "#d97706")
+    if previous is not None:
+        _plot_contour(ax, previous, "Previous take", "#d97706")
     _plot_contour(ax, current, "Current take", "#2563eb")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Pitch (MIDI note)")
@@ -64,19 +66,26 @@ def plot_reference_extraction(baseline: MelodyBaseline, reference_contour: Pitch
 
 def plot_voiced_coverage(
     baseline: MelodyBaseline,
-    previous: PitchContour,
+    previous: PitchContour | None,
     current: PitchContour,
 ):
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(10, 2.8))
-    _coverage_row(ax, baseline, y=2, label="Reference", color="#111827")
-    _voiced_row(ax, previous, y=1, label="Previous voiced", color="#d97706")
-    _voiced_row(ax, current, y=0, label="Current voiced", color="#2563eb")
+    if previous is None:
+        _coverage_row(ax, baseline, y=1, label="Reference", color="#111827")
+        _voiced_row(ax, current, y=0, label="Current voiced", color="#2563eb")
+        ax.set_yticks([0, 1])
+        ax.set_yticklabels(["Current", "Reference"])
+        ax.set_ylim(-0.6, 1.6)
+    else:
+        _coverage_row(ax, baseline, y=2, label="Reference", color="#111827")
+        _voiced_row(ax, previous, y=1, label="Previous voiced", color="#d97706")
+        _voiced_row(ax, current, y=0, label="Current voiced", color="#2563eb")
+        ax.set_yticks([0, 1, 2])
+        ax.set_yticklabels(["Current", "Previous", "Reference"])
+        ax.set_ylim(-0.6, 2.6)
     ax.set_xlabel("Time (s)")
-    ax.set_yticks([0, 1, 2])
-    ax.set_yticklabels(["Current", "Previous", "Reference"])
-    ax.set_ylim(-0.6, 2.6)
     ax.set_title("Voiced-frame coverage")
     ax.grid(True, axis="x", alpha=0.25)
     fig.tight_layout()
@@ -85,19 +94,26 @@ def plot_voiced_coverage(
 
 def plot_contour_voiced_coverage(
     reference: PitchContour,
-    previous: PitchContour,
+    previous: PitchContour | None,
     current: PitchContour,
 ):
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(10, 2.8))
-    _voiced_row(ax, reference, y=2, label="Reference voiced", color="#111827")
-    _voiced_row(ax, previous, y=1, label="Previous voiced", color="#d97706")
-    _voiced_row(ax, current, y=0, label="Current voiced", color="#2563eb")
+    if previous is None:
+        _voiced_row(ax, reference, y=1, label="Reference voiced", color="#111827")
+        _voiced_row(ax, current, y=0, label="Current voiced", color="#2563eb")
+        ax.set_yticks([0, 1])
+        ax.set_yticklabels(["Current", "Reference"])
+        ax.set_ylim(-0.6, 1.6)
+    else:
+        _voiced_row(ax, reference, y=2, label="Reference voiced", color="#111827")
+        _voiced_row(ax, previous, y=1, label="Previous voiced", color="#d97706")
+        _voiced_row(ax, current, y=0, label="Current voiced", color="#2563eb")
+        ax.set_yticks([0, 1, 2])
+        ax.set_yticklabels(["Current", "Previous", "Reference"])
+        ax.set_ylim(-0.6, 2.6)
     ax.set_xlabel("Time (s)")
-    ax.set_yticks([0, 1, 2])
-    ax.set_yticklabels(["Current", "Previous", "Reference"])
-    ax.set_ylim(-0.6, 2.6)
     ax.set_title("Voiced-frame coverage")
     ax.grid(True, axis="x", alpha=0.25)
     fig.tight_layout()

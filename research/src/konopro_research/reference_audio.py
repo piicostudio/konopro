@@ -23,6 +23,8 @@ def baseline_from_reference_audio(
     *,
     title: str = "Experimental audio-derived baseline",
     window_s: float = 0.20,
+    pitch_kwargs: dict[str, object] | None = None,
+    clean_kwargs: dict[str, object] | None = None,
 ) -> MelodyBaseline:
     """Build a dense baseline from BYO reference audio.
 
@@ -30,7 +32,10 @@ def baseline_from_reference_audio(
     but symbolic baselines are the reliable demo path.
     """
     audio, sample_rate = load_audio(path_or_file)
-    contour = clean_pitch_contour(extract_pitch(audio, sample_rate, name=title))
+    contour = clean_pitch_contour(
+        extract_pitch(audio, sample_rate, name=title, **(pitch_kwargs or {})),
+        **(clean_kwargs or {}),
+    )
     return baseline_from_pitch_contour(
         contour.times_s,
         contour.frequencies_hz,
@@ -44,9 +49,14 @@ def extract_reference_audio(
     *,
     title: str = "Experimental audio-derived baseline",
     window_s: float = 0.20,
+    pitch_kwargs: dict[str, object] | None = None,
+    clean_kwargs: dict[str, object] | None = None,
 ) -> ReferenceExtraction:
     audio, sample_rate = load_audio(path_or_file)
-    contour = clean_pitch_contour(extract_pitch(audio, sample_rate, name=title))
+    contour = clean_pitch_contour(
+        extract_pitch(audio, sample_rate, name=title, **(pitch_kwargs or {})),
+        **(clean_kwargs or {}),
+    )
     baseline = baseline_from_pitch_contour(
         contour.times_s,
         contour.frequencies_hz,

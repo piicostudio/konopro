@@ -19,14 +19,29 @@ def score_take_against_reference_contour(
     reference: PitchContour,
     *,
     name: str = "take",
+    pitch_kwargs: dict[str, object] | None = None,
+    clean_kwargs: dict[str, object] | None = None,
+    dtw_time_weight: float = 20.0,
+    dtw_band_radius: float = 0.06,
+    max_dtw_frames: int = 2400,
+    pitch_error_penalty: float = 0.70,
+    stability_penalty: float = 1.10,
+    timing_penalty: float = 90.0,
+    transposition_warning_cents: float = 90.0,
 ) -> ScoreResult:
     """Score a take against a reference pitch contour using dynamic time warping."""
-    reference = clean_pitch_contour(reference)
-    take_contour, audio = _as_pitch_contour(take, name=name)
-    take_contour = clean_pitch_contour(take_contour)
+    reference = clean_pitch_contour(reference, **(clean_kwargs or {}))
+    take_contour, audio = _as_pitch_contour(take, name=name, pitch_kwargs=pitch_kwargs)
+    take_contour = clean_pitch_contour(take_contour, **(clean_kwargs or {}))
 
     warnings: list[str] = []
-    alignment = _align_voiced_contours(reference, take_contour)
+    alignment = _align_voiced_contours(
+        reference,
+        take_contour,
+        time_weight=dtw_time_weight,
+        band_radius=dtw_band_radius,
+        max_frames=max_dtw_frames,
+    )
     if alignment is None:
         confidence = estimate_recording_confidence(audio, take_contour)
         warnings.extend(confidence.reasons)
@@ -45,11 +60,11 @@ def score_take_against_reference_contour(
     estimated_transposition = float(np.nanmedian(signed_errors))
     abs_errors = np.abs(signed_errors)
     mean_error = float(np.nanmean(abs_errors))
-    pitch_score = _clamp_score(100.0 - mean_error * 0.70)
+    pitch_score = _clamp_score(100.0 - mean_error * pitch_error_penalty)
 
     residual_errors = signed_errors - estimated_transposition
     stability_cents = float(np.nanstd(residual_errors))
-    stability_score = _clamp_score(100.0 - stability_cents * 1.10)
+    stability_score = _clamp_score(100.0 - stability_cents * stability_penalty)
 
     reference_voiced = np.count_nonzero(reference.voiced_mask)
     take_voiced = np.count_nonzero(take_contour.voiced_mask)
@@ -57,13 +72,13 @@ def score_take_against_reference_contour(
     coverage_score = _clamp_score(coverage_pct)
 
     median_abs_timing_error = float(np.nanmedian(np.abs(alignment.take_times_s - alignment.reference_times_s)))
-    timing_score = _clamp_score(100.0 - median_abs_timing_error * 90.0)
+    timing_score = _clamp_score(100.0 - median_abs_timing_error * timing_penalty)
 
     confidence = estimate_recording_confidence(audio, take_contour)
     warnings.extend(confidence.reasons)
     if confidence.level == "low":
         warnings.append("recording confidence is low; interpret score carefully")
-    if abs(estimated_transposition) >= 90.0:
+    if abs(estimated_transposition) >= transposition_warning_cents:
         semitone_shift = round(estimated_transposition / 100.0)
         warnings.append(
             f"take appears shifted by about {semitone_shift:+d} semitone(s); check key/transposition"
@@ -105,9 +120,10 @@ def compare_takes_to_reference_contour(
     previous: TakeInput,
     current: TakeInput,
     reference: PitchContour,
+    **score_kwargs: object,
 ) -> ComparisonResult:
-    previous_score = score_take_against_reference_contour(previous, reference, name="previous")
-    current_score = score_take_against_reference_contour(current, reference, name="current")
+    previous_score = score_take_against_reference_contour(previous, reference, name="previous", **score_kwargs)
+    current_score = score_take_against_reference_contour(current, reference, name="current", **score_kwargs)
 
     overall_delta = round(current_score.overall_score - previous_score.overall_score, 2)
     pitch_delta = round(current_score.pitch_accuracy_score - previous_score.pitch_accuracy_score, 2)
@@ -151,18 +167,25 @@ class _ContourAlignment:
         self.take_hz = take_hz
 
 
-def _align_voiced_contours(reference: PitchContour, take: PitchContour) -> _ContourAlignment | None:
+def _align_voiced_contours(
+    reference: PitchContour,
+    take: PitchContour,
+    *,
+    time_weight: float,
+    band_radius: float,
+    max_frames: int,
+) -> _ContourAlignment | None:
     ref_times, ref_hz = _voiced_sequence(reference)
     take_times, take_hz = _voiced_sequence(take)
     if len(ref_hz) < 3 or len(take_hz) < 3:
         return None
 
-    ref_times, ref_hz = _thin_sequence(ref_times, ref_hz)
-    take_times, take_hz = _thin_sequence(take_times, take_hz)
+    ref_times, ref_hz = _thin_sequence(ref_times, ref_hz, max_frames=max_frames)
+    take_times, take_hz = _thin_sequence(take_times, take_hz, max_frames=max_frames)
     ref_midi = hz_to_midi(ref_hz)
     take_midi = hz_to_midi(take_hz)
-    ref_features = np.vstack([ref_midi, _normalized_time_feature(ref_times, weight=20.0)])
-    take_features = np.vstack([take_midi, _normalized_time_feature(take_times, weight=20.0)])
+    ref_features = np.vstack([ref_midi, _normalized_time_feature(ref_times, weight=time_weight)])
+    take_features = np.vstack([take_midi, _normalized_time_feature(take_times, weight=time_weight)])
 
     try:
         import librosa
@@ -172,7 +195,7 @@ def _align_voiced_contours(reference: PitchContour, take: PitchContour) -> _Cont
             Y=take_features,
             metric="euclidean",
             global_constraints=True,
-            band_rad=0.06,
+            band_rad=band_radius,
         )
         pairs = path[::-1]
         ref_indices = pairs[:, 0]
@@ -190,11 +213,16 @@ def _align_voiced_contours(reference: PitchContour, take: PitchContour) -> _Cont
     )
 
 
-def _as_pitch_contour(take: TakeInput, *, name: str) -> tuple[PitchContour, np.ndarray | None]:
+def _as_pitch_contour(
+    take: TakeInput,
+    *,
+    name: str,
+    pitch_kwargs: dict[str, object] | None = None,
+) -> tuple[PitchContour, np.ndarray | None]:
     if isinstance(take, PitchContour):
         return take, None
     audio, sample_rate = load_audio(take)
-    return extract_pitch(audio, sample_rate, name=name), audio
+    return extract_pitch(audio, sample_rate, name=name, **(pitch_kwargs or {})), audio
 
 
 def _voiced_sequence(contour: PitchContour) -> tuple[np.ndarray, np.ndarray]:
