@@ -28,5 +28,6 @@ uv sync --extra dev
 uv run python scripts/generate_demo_data.py
 uv run python scripts/smoke_test.py
 uv run pytest
-uv run streamlit run app/streamlit_app.py
+uv run streamlit run frontends/streamlit/app.py
+uv run python frontends/gradio/app.py
 ```

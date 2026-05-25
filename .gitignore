@@ -25,6 +25,7 @@ research/data/private/*
 # Research scratch outputs that are useful locally but not core demo source.
 research/reports/
 research/notebooks/
+research/.cache/
 
 # Local Streamlit state.
 .streamlit/

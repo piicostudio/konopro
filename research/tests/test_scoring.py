@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import numpy as np
 
+import konopro_research.separation as separation
+from konopro_research.audio_io import write_wav
 from konopro_research.baseline import MelodyBaseline, cents_difference, demo_baseline, midi_to_hz
 from konopro_research.contour_scoring import compare_takes_to_reference_contour
 from konopro_research.demo_data import synthesize_take
+from konopro_research.matching import (
+    build_demo_section_catalog,
+    match_query_to_sections,
+    split_contour_into_sections,
+)
 from konopro_research.pitch import PitchContour
 from konopro_research.quality import analyze_baseline_quality, duration_mismatch_warnings
 from konopro_research.reference_audio import baseline_from_reference_audio
 from konopro_research.scoring import compare_takes, score_take
-from konopro_research.audio_io import write_wav
+from konopro_research.separation import prepare_vocal_analysis_audio
 
 
 def test_stable_but_wrong_is_not_treated_as_song_improvement() -> None:
@@ -58,6 +65,41 @@ def test_contour_scoring_penalizes_same_shape_wrong_key() -> None:
 
     assert comparison.current.pitch_accuracy_score < comparison.previous.pitch_accuracy_score
     assert any("semitone" in warning for warning in comparison.current.warnings)
+
+
+def test_demo_section_matching_finds_demo_chorus() -> None:
+    baseline = demo_baseline()
+    query = contour_from_baseline(baseline, cents_error=25, vibrato_cents=12)
+    catalog = build_demo_section_catalog()
+
+    result = match_query_to_sections(query, catalog, top_k=3)
+
+    assert result.best is not None
+    assert result.best.section.song_title == "Konopro Demo Song"
+    assert result.best.section.section_label == "Chorus"
+    assert result.best.score > 75
+
+
+def test_section_matching_can_ignore_transposition() -> None:
+    baseline = demo_baseline()
+    query = contour_from_baseline(baseline, cents_error=500, vibrato_cents=8)
+    catalog = build_demo_section_catalog()
+
+    result = match_query_to_sections(query, catalog, transpose_invariant=True)
+
+    assert result.best is not None
+    assert result.best.section.section_label == "Chorus"
+    assert result.best.score > 70
+
+
+def test_reference_contour_can_be_split_into_sections() -> None:
+    contour = dynamic_contour()
+
+    sections = split_contour_into_sections(contour, window_s=3.0, hop_s=2.0, min_voiced_frames=8)
+
+    assert len(sections) >= 3
+    assert sections[0].section_label == "Section 1"
+    assert sections[0].duration_s <= 3.0
 
 
 def test_missing_notes_reduce_coverage() -> None:
@@ -118,6 +160,50 @@ def test_cents_difference_sign_and_scale() -> None:
     cents = cents_difference(np.asarray([one_semitone_up]), np.asarray([a4]))
 
     assert abs(float(cents[0]) - 100.0) < 0.001
+
+
+def test_no_source_separation_returns_original_audio(tmp_path) -> None:
+    path = tmp_path / "take.wav"
+    write_wav(path, np.zeros(2205), 22050)
+
+    result = prepare_vocal_analysis_audio(path, cache_dir=tmp_path / "cache")
+
+    assert result.analysis_path == path
+    assert result.used_original is True
+    assert result.backend == "none"
+
+
+def test_demucs_unavailable_falls_back_to_original_audio(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "song.wav"
+    write_wav(path, np.zeros(2205), 22050)
+    monkeypatch.setattr(separation, "is_demucs_available", lambda: False)
+
+    result = prepare_vocal_analysis_audio(path, cache_dir=tmp_path / "cache", backend="demucs")
+
+    assert result.analysis_path == path
+    assert result.used_original is True
+    assert any("Demucs is not installed" in warning for warning in result.warnings)
+
+
+def test_demucs_progress_noise_is_not_shown_as_main_warning(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "song.wav"
+    write_wav(path, np.zeros(2205), 22050)
+    progress_noise = "0%| | 0.0/245.7 [00:00<?, ?seconds/s]\n2%|█▋ | 5.85/245.7"
+
+    class FakeCompleted:
+        returncode = 1
+        stderr = progress_noise
+        stdout = ""
+
+    monkeypatch.setattr(separation, "is_demucs_available", lambda: True)
+    monkeypatch.setattr(separation.subprocess, "run", lambda *args, **kwargs: FakeCompleted())
+
+    result = prepare_vocal_analysis_audio(path, cache_dir=tmp_path / "cache", backend="demucs")
+
+    assert result.used_original is True
+    assert "0%|" not in result.warnings[0]
+    assert "Open processing metadata" in result.warnings[0]
+    assert "0%|" in result.debug_output
 
 
 def contour_from_baseline(

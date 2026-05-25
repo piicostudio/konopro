@@ -120,6 +120,28 @@ def plot_contour_voiced_coverage(
     return fig
 
 
+def plot_section_match(
+    reference_section: PitchContour,
+    query: PitchContour,
+    *,
+    query_start_s: float,
+    query_end_s: float,
+):
+    import matplotlib.pyplot as plt
+
+    query_window = _crop_contour(query, query_start_s, query_end_s)
+    fig, ax = plt.subplots(figsize=(10, 4.2))
+    _plot_relative_contour(ax, reference_section, "Matched reference section", "#111827", linewidth=2.0)
+    _plot_relative_contour(ax, query_window, "Query window", "#2563eb", linewidth=1.6)
+    ax.set_xlabel("Normalized phrase time")
+    ax.set_ylabel("Relative pitch (semitones)")
+    ax.set_title("Section match shape comparison")
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="best")
+    fig.tight_layout()
+    return fig
+
+
 def _plot_baseline(ax, baseline: MelodyBaseline) -> None:
     for note in baseline.notes:
         ax.hlines(
@@ -138,6 +160,38 @@ def _plot_contour(ax, contour: PitchContour, label: str, color: str, *, linewidt
         return
     midi = hz_to_midi(contour.frequencies_hz[mask])
     ax.plot(contour.times_s[mask], midi, color=color, linewidth=linewidth, alpha=0.9, label=label)
+
+
+def _plot_relative_contour(
+    ax,
+    contour: PitchContour,
+    label: str,
+    color: str,
+    *,
+    linewidth: float = 1.5,
+) -> None:
+    mask = contour.voiced_mask
+    if not np.any(mask):
+        return
+    times = contour.times_s[mask]
+    midi = hz_to_midi(contour.frequencies_hz[mask])
+    duration = max(float(np.nanmax(times) - np.nanmin(times)), 0.001)
+    normalized_times = (times - float(np.nanmin(times))) / duration
+    relative_midi = midi - float(np.nanmedian(midi))
+    ax.plot(normalized_times, relative_midi, color=color, linewidth=linewidth, alpha=0.9, label=label)
+
+
+def _crop_contour(contour: PitchContour, start_s: float, end_s: float) -> PitchContour:
+    mask = (contour.times_s >= start_s) & (contour.times_s <= end_s)
+    times = contour.times_s[mask]
+    if times.size:
+        times = times - start_s
+    return PitchContour(
+        times,
+        contour.frequencies_hz[mask],
+        contour.confidence[mask],
+        name=contour.name,
+    )
 
 
 def _coverage_row(ax, baseline: MelodyBaseline, *, y: int, label: str, color: str) -> None:

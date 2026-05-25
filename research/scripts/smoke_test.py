@@ -12,6 +12,7 @@ if str(SRC_ROOT) not in sys.path:
 from konopro_research.audio_io import load_audio  # noqa: E402
 from konopro_research.baseline import load_baseline_csv  # noqa: E402
 from konopro_research.demo_data import ensure_demo_data  # noqa: E402
+from konopro_research.matching import build_demo_section_catalog, match_query_to_sections  # noqa: E402
 from konopro_research.pitch import extract_pitch  # noqa: E402
 from konopro_research.plots import plot_take_comparison  # noqa: E402
 from konopro_research.quality import analyze_baseline_quality  # noqa: E402
@@ -34,6 +35,9 @@ def main() -> int:
     current_audio, _ = load_audio(paths["current"], target_sr=sample_rate)
     previous_contour = extract_pitch(previous_audio, sample_rate, name="previous")
     current_contour = extract_pitch(current_audio, sample_rate, name="current")
+    match_result = match_query_to_sections(current_contour, build_demo_section_catalog(), top_k=1)
+    if match_result.best is None or match_result.best.section.section_label != "Chorus":
+        raise RuntimeError("Expected demo matching query to find the demo chorus")
 
     out_dir = RESEARCH_ROOT / "reports" / "generated"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -45,6 +49,7 @@ def main() -> int:
         "demo_verdict": comparison.verdict,
         "demo_overall_delta": comparison.overall_delta,
         "stable_wrong_delta": stable_wrong.overall_delta,
+        "best_section_match": match_result.best.to_dict(),
         "baseline_quality": analyze_baseline_quality(baseline).to_dict(),
         "plot": str(out_dir / "demo_pitch_comparison.png"),
     }
