@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,9 @@ class SeparationResult:
     used_cache: bool
     warnings: tuple[str, ...]
     debug_output: str = ""
+    cache_key: str = ""
+    cache_path: str = ""
+    cache_status: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -68,6 +73,7 @@ def prepare_vocal_analysis_audio(
             used_cache=False,
             warnings=(),
             debug_output="",
+            cache_status="off",
         )
     if backend != "demucs":
         raise ValueError(f"Unsupported source-separation backend: {backend}")
@@ -88,6 +94,7 @@ def prepare_vocal_analysis_audio(
     cache_dir = Path(cache_dir)
     cache_key = _cache_key(source_path, model=model, device=device, stem=stem, shifts=shifts, overlap=overlap)
     target_path = cache_dir / "demucs" / model / cache_key / f"{stem}.wav"
+    fallback_path = target_path.parent / "fallback.json"
     if target_path.exists() and target_path.stat().st_size > 0:
         return SeparationResult(
             source_path=source_path,
@@ -100,6 +107,24 @@ def prepare_vocal_analysis_audio(
             used_cache=True,
             warnings=(),
             debug_output="",
+            cache_key=cache_key,
+            cache_path=str(target_path),
+            cache_status="hit",
+        )
+    cached_fallback = _read_fallback_marker(fallback_path)
+    if cached_fallback is not None and not _should_retry_cached_fallback(cached_fallback):
+        return _fallback_result(
+            source_path,
+            backend=backend,
+            stem=stem,
+            model=model,
+            device=device,
+            warning=f"Using cached Demucs fallback; {cached_fallback['warning']}",
+            debug_output=str(cached_fallback.get("debug_output", "")),
+            used_cache=True,
+            cache_key=cache_key,
+            cache_path=str(fallback_path),
+            cache_status="cached fallback",
         )
 
     run_dir = cache_dir / "_runs" / cache_key
@@ -133,13 +158,17 @@ def prepare_vocal_analysis_audio(
             timeout=timeout_s,
         )
     except Exception as exc:
-        return _fallback_result(
+        warning = f"Demucs could not run; using original audio for analysis. {exc}"
+        return _store_fallback_result(
             source_path,
+            fallback_path=fallback_path,
             backend=backend,
             stem=stem,
             model=model,
             device=device,
-            warning=f"Demucs could not run; using original audio for analysis. {exc}",
+            warning=warning,
+            debug_output="",
+            cache_key=cache_key,
         )
     if completed.returncode != 0:
         detail = _demucs_failure_summary(completed.stderr, completed.stdout)
@@ -147,25 +176,30 @@ def prepare_vocal_analysis_audio(
             "\n".join(part for part in (completed.stderr, completed.stdout) if part),
             limit=2000,
         )
-        return _fallback_result(
+        return _store_fallback_result(
             source_path,
+            fallback_path=fallback_path,
             backend=backend,
             stem=stem,
             model=model,
             device=device,
             warning=detail,
             debug_output=debug_output,
+            cache_key=cache_key,
         )
 
     candidates = sorted(run_dir.glob(f"**/{stem}.wav"))
     if not candidates:
-        return _fallback_result(
+        return _store_fallback_result(
             source_path,
+            fallback_path=fallback_path,
             backend=backend,
             stem=stem,
             model=model,
             device=device,
             warning="Demucs finished but no vocals stem was found; using original audio for analysis.",
+            debug_output="",
+            cache_key=cache_key,
         )
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -181,6 +215,9 @@ def prepare_vocal_analysis_audio(
         used_cache=False,
         warnings=(),
         debug_output="",
+        cache_key=cache_key,
+        cache_path=str(target_path),
+        cache_status="stored",
     )
 
 
@@ -193,6 +230,10 @@ def _fallback_result(
     device: str,
     warning: str,
     debug_output: str = "",
+    used_cache: bool = False,
+    cache_key: str = "",
+    cache_path: str = "",
+    cache_status: str = "fallback",
 ) -> SeparationResult:
     return SeparationResult(
         source_path=source_path,
@@ -202,9 +243,40 @@ def _fallback_result(
         model=model,
         device=device,
         used_original=True,
-        used_cache=False,
+        used_cache=used_cache,
         warnings=(warning,),
         debug_output=debug_output,
+        cache_key=cache_key,
+        cache_path=cache_path,
+        cache_status=cache_status,
+    )
+
+
+def _store_fallback_result(
+    source_path: Path,
+    *,
+    fallback_path: Path,
+    backend: str,
+    stem: str,
+    model: str,
+    device: str,
+    warning: str,
+    debug_output: str,
+    cache_key: str,
+) -> SeparationResult:
+    _write_fallback_marker(fallback_path, warning=warning, debug_output=debug_output)
+    return _fallback_result(
+        source_path,
+        backend=backend,
+        stem=stem,
+        model=model,
+        device=device,
+        warning=warning,
+        debug_output=debug_output,
+        used_cache=False,
+        cache_key=cache_key,
+        cache_path=str(fallback_path),
+        cache_status="stored fallback",
     )
 
 
@@ -218,9 +290,49 @@ def _cache_key(path: Path, **options: object) -> str:
     return hasher.hexdigest()[:20]
 
 
+def _read_fallback_marker(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+    except Exception:
+        return None
+    warning = str(data.get("warning", "")).strip()
+    if not warning:
+        return None
+    return data
+
+
+def _write_fallback_marker(path: Path, *, warning: str, debug_output: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "created_at": time.time(),
+        "warning": warning,
+        "debug_output": debug_output,
+    }
+    with path.open("w", encoding="utf-8") as file:
+        json.dump(payload, file, indent=2)
+
+
+def _should_retry_cached_fallback(data: dict[str, Any]) -> bool:
+    warning = str(data.get("warning", ""))
+    if "TorchCodec" in warning and importlib.util.find_spec("torchcodec") is not None:
+        return True
+    return False
+
+
 def _demucs_failure_summary(stderr: str | None, stdout: str | None) -> str:
     output = "\n".join(part for part in (stderr, stdout) if part)
     lines = [line.strip() for line in output.splitlines() if line.strip()]
+
+    if _mentions_torchcodec_issue(output):
+        return (
+            "Demucs failed because TorchCodec is required by torchaudio for writing stems. "
+            "Install it with `pip install torchcodec` (or your environment package manager), "
+            "then rerun analysis."
+        )
+
     meaningful = [
         _strip_carriage_progress(line)
         for line in lines
@@ -240,6 +352,15 @@ def _demucs_failure_summary(stderr: str | None, stdout: str | None) -> str:
     return (
         "Demucs failed; using original audio for analysis. "
         "Open processing metadata for raw Demucs output."
+    )
+
+
+def _mentions_torchcodec_issue(output: str) -> bool:
+    lower = output.lower()
+    return (
+        "torchcodec is required" in lower
+        or "importerror: torchcodec is required" in lower
+        or "save_with_torchcodec" in lower
     )
 
 

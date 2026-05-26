@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import matplotlib
 import numpy as np
 
 from konopro_research.baseline import MelodyBaseline, hz_to_midi
 from konopro_research.pitch import PitchContour
+
+matplotlib.use("Agg", force=True)
 
 
 def plot_take_comparison(

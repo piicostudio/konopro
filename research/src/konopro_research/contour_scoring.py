@@ -83,7 +83,6 @@ def score_take_against_reference_contour(
         warnings.append(
             f"take appears shifted by about {semitone_shift:+d} semitone(s); check key/transposition"
         )
-
     take_duration = _contour_duration(take_contour)
     reference_duration = _contour_duration(reference)
     if reference_duration > 0 and abs(take_duration - reference_duration) > max(2.0, reference_duration * 0.25):

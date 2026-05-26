@@ -103,7 +103,7 @@ def extract_matching_query(
 
 
 def build_demo_section_catalog() -> tuple[SongSection, ...]:
-    """Return a small public/synthetic catalog for TA-safe section retrieval."""
+    """Return a small public/synthetic catalog for section retrieval."""
     sections = [
         _section_from_baseline(
             demo_baseline(),

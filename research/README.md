@@ -7,7 +7,7 @@ This Python prototype now contains two linked research demos:
 - **Prototype B: Song & Section Matching** ranks likely song/section candidates
   before handing the best matched section into the scorer.
 
-It is optimized for a TA-runnable demo first, with private real-song experiments
+It is optimized for a reliable local demo first, with private real-song experiments
 kept out of Git.
 
 ## Setup
@@ -45,7 +45,7 @@ uv sync --extra dev --extra stems
 ## Prototype B: Song & Section Matching
 
 Use **B1. Match Song & Section** after selecting or uploading a current take. The
-TA-safe path compares the current take against a small synthetic song-section
+synthetic demo path compares the current take against a small synthetic song-section
 catalog. For private experiments, upload reference audio in Prototype A, then
 search that reference split into overlapping phrase windows.
 
@@ -87,7 +87,7 @@ reasonable.
 For uploaded mixed songs, open **Live analysis hyperparameters > Vocal
 Isolation** and choose **Demucs vocal stem**. The first run may download model
 weights and can be slow on CPU, but separated stems are cached under
-`research/.cache/stems/`. Keep vocal isolation off for the TA-safe synthetic demo
+`research/.cache/stems/`. Keep vocal isolation off for the synthetic demo
 unless you specifically want to test real-song uploads.
 
 ## Gradio Alternative
@@ -107,4 +107,4 @@ experiments.
 
 Put private BYO reference audio and vocal takes in `data/private/`. The app can
 experimentally extract a dense baseline from uploaded reference audio, but the
-reliable TA path is the symbolic baseline in `data/demo/`.
+reliable local demo path is the symbolic baseline in `data/demo/`.
