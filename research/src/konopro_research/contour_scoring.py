@@ -71,7 +71,10 @@ def score_take_against_reference_contour(
     coverage_pct = 100.0 * min(1.0, take_voiced / max(1, reference_voiced))
     coverage_score = _clamp_score(coverage_pct)
 
-    median_abs_timing_error = float(np.nanmedian(np.abs(alignment.take_times_s - alignment.reference_times_s)))
+    timing_deltas = alignment.take_times_s - alignment.reference_times_s
+    global_offset_s = float(np.nanmedian(timing_deltas))
+    local_timing_errors = timing_deltas - global_offset_s
+    median_abs_timing_error = float(np.nanmedian(np.abs(local_timing_errors)))
     timing_score = _clamp_score(100.0 - median_abs_timing_error * timing_penalty)
 
     confidence = estimate_recording_confidence(audio, take_contour)
@@ -104,7 +107,7 @@ def score_take_against_reference_contour(
         estimated_transposition_cents=round(float(estimated_transposition), 2),
         pitch_stability_cents=round(float(stability_cents), 2),
         note_coverage_pct=round(float(coverage_pct), 2),
-        timing_offset_s=round(float(np.nanmedian(alignment.take_times_s - alignment.reference_times_s)), 3),
+        timing_offset_s=round(float(global_offset_s), 3),
         take_duration_s=round(float(take_duration), 3),
         baseline_duration_s=round(float(reference_duration), 3),
         recording_confidence_score=round(float(confidence.score * 100.0), 2),
@@ -150,6 +153,72 @@ def compare_takes_to_reference_contour(
         feedback=tuple(message for messages in feedback_by_category.values() for message in messages),
         feedback_by_category=feedback_by_category,
     )
+
+
+def contour_timing_debug(
+    take: TakeInput,
+    reference: PitchContour,
+    *,
+    name: str = "take",
+    pitch_kwargs: dict[str, object] | None = None,
+    clean_kwargs: dict[str, object] | None = None,
+    dtw_time_weight: float = 20.0,
+    dtw_band_radius: float = 0.06,
+    max_dtw_frames: int = 2400,
+    timing_penalty: float = 90.0,
+) -> dict[str, object]:
+    reference = clean_pitch_contour(reference, **(clean_kwargs or {}))
+    take_contour, _ = _as_pitch_contour(take, name=name, pitch_kwargs=pitch_kwargs)
+    take_contour = clean_pitch_contour(take_contour, **(clean_kwargs or {}))
+    alignment = _align_voiced_contours(
+        reference,
+        take_contour,
+        time_weight=dtw_time_weight,
+        band_radius=dtw_band_radius,
+        max_frames=max_dtw_frames,
+    )
+    if alignment is None:
+        return {
+            "matched_pairs_count": 0,
+            "interpretation": "Not enough matched voiced frames to compute timing diagnostics.",
+            "score_currently_used_by_final_result": "absolute timing score",
+        }
+
+    raw_delta = alignment.take_times_s - alignment.reference_times_s
+    global_offset = float(np.nanmedian(raw_delta))
+    local_error = raw_delta - global_offset
+    median_abs_raw_delta = float(np.nanmedian(np.abs(raw_delta)))
+    median_abs_local_error = float(np.nanmedian(np.abs(local_error)))
+    old_score = _clamp_score(100.0 - median_abs_raw_delta * timing_penalty)
+    corrected_score = _clamp_score(100.0 - median_abs_local_error * timing_penalty)
+    spread = float(np.nanmedian(np.abs(raw_delta - global_offset)))
+    if median_abs_raw_delta > 1.0 and median_abs_local_error < 0.5:
+        interpretation = (
+            "Raw timing offset is large but local timing error is small, "
+            "suggesting recording start offset rather than rhythmic drift."
+        )
+    elif median_abs_local_error >= 0.5:
+        interpretation = (
+            "Local timing error is still large after offset correction, suggesting DTW mismatch, "
+            "sparse contour, drift, or bad extraction."
+        )
+    else:
+        interpretation = "Raw and local timing errors are both small."
+
+    return {
+        "matched_pairs_count": int(raw_delta.size),
+        "raw_delta_s_sample": [round(float(value), 3) for value in raw_delta[:12]],
+        "raw_delta_s_median": round(global_offset, 3),
+        "raw_delta_s_mad_or_std": round(spread, 3),
+        "global_offset_s": round(global_offset, 3),
+        "local_error_s_sample": [round(float(value), 3) for value in local_error[:12]],
+        "median_abs_raw_delta_s": round(median_abs_raw_delta, 3),
+        "median_abs_local_error_s": round(median_abs_local_error, 3),
+        "old_timing_score_absolute": round(float(old_score), 2),
+        "new_timing_score_offset_corrected": round(float(corrected_score), 2),
+        "score_currently_used_by_final_result": "new_timing_score_offset_corrected",
+        "interpretation": interpretation,
+    }
 
 
 class _ContourAlignment:
