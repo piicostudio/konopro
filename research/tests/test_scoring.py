@@ -206,6 +206,38 @@ def test_demucs_progress_noise_is_not_shown_as_main_warning(tmp_path, monkeypatc
     assert "0%|" in result.debug_output
 
 
+def test_demucs_no_vocals_stem_is_supported(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "song.wav"
+    write_wav(path, np.zeros(2205), 22050)
+
+    class FakeCompleted:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    def fake_run(command, **kwargs):
+        run_dir = tmp_path / "cache" / "_runs"
+        output_path = next(run_dir.glob("*/")) / "htdemucs" / "song" / "no_vocals.wav"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        write_wav(output_path, np.zeros(2205), 22050)
+        assert "--two-stems=vocals" in command
+        return FakeCompleted()
+
+    monkeypatch.setattr(separation, "is_demucs_available", lambda: True)
+    monkeypatch.setattr(separation.subprocess, "run", fake_run)
+
+    result = prepare_vocal_analysis_audio(
+        path,
+        cache_dir=tmp_path / "cache",
+        backend="demucs",
+        stem="instrumental",
+    )
+
+    assert result.used_original is False
+    assert result.stem == "no_vocals"
+    assert result.analysis_path.name == "no_vocals.wav"
+
+
 def contour_from_baseline(
     baseline: MelodyBaseline,
     *,

@@ -52,15 +52,16 @@ def prepare_vocal_analysis_audio(
     jobs: int = 0,
     timeout_s: int = 1800,
 ) -> SeparationResult:
-    """Return the audio path that should be analyzed by pYIN.
+    """Return the audio path that should be analyzed by downstream audio tasks.
 
     The default returns the original file. With the Demucs backend, the function
-    creates a cached vocal stem and returns that path. If Demucs is unavailable
+    creates a cached stem and returns that path. If Demucs is unavailable
     or fails, it falls back to the original file with a warning so the demo keeps
     running.
     """
     source_path = Path(path)
     backend = backend.lower().strip()
+    stem = _normalize_stem(stem)
     if backend in {"", "none", "off", "original"}:
         return SeparationResult(
             source_path=source_path,
@@ -77,8 +78,8 @@ def prepare_vocal_analysis_audio(
         )
     if backend != "demucs":
         raise ValueError(f"Unsupported source-separation backend: {backend}")
-    if stem != "vocals":
-        raise ValueError("Only the vocals stem is supported for pitch analysis right now")
+    if stem not in {"vocals", "no_vocals"}:
+        raise ValueError("Only the vocals and no_vocals stems are supported right now")
     if not source_path.exists():
         raise FileNotFoundError(source_path)
     if not is_demucs_available():
@@ -133,7 +134,7 @@ def prepare_vocal_analysis_audio(
         sys.executable,
         "-m",
         "demucs.separate",
-        f"--two-stems={stem}",
+        "--two-stems=vocals",
         "-n",
         model,
         "-d",
@@ -219,6 +220,13 @@ def prepare_vocal_analysis_audio(
         cache_path=str(target_path),
         cache_status="stored",
     )
+
+
+def _normalize_stem(stem: str) -> str:
+    stem = stem.lower().strip().replace("-", "_")
+    if stem in {"instrumental", "instrumentals", "accompaniment", "backing", "bgm"}:
+        return "no_vocals"
+    return stem
 
 
 def _fallback_result(

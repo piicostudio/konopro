@@ -11,6 +11,7 @@ dependencies = [
   "numpy>=1.26",
   "pandas>=2.2",
   "plotly>=5.22",
+  "requests>=2.31",
   "soundfile>=0.12",
   "streamlit>=1.35",
 ]
