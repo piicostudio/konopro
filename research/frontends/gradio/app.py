@@ -55,6 +55,9 @@ from konopro_research.plots import (  # noqa: E402
 )
 from konopro_research.reference_audio import extract_reference_audio  # noqa: E402
 from konopro_research.research_labs import (  # noqa: E402
+    run_fingerprint_diagnostics_lab as lab_run_fingerprint_diagnostics,
+    run_long_session_segmentation_lab as lab_run_long_session_segmentation,
+    run_matched_progress_lab as lab_run_matched_progress,
     run_pitch_extractor_lab as lab_run_pitch_extractors,
     run_reference_builder_lab as lab_run_reference_builder,
     run_scoring_calibration_lab as lab_run_scoring_calibration,
@@ -2324,6 +2327,130 @@ def run_stress_test_lab_ui(scenarios: list[str] | None) -> tuple[Any, ...]:
     return lab_run_stress_test(scenarios=scenarios or [])
 
 
+def run_matched_progress_lab_ui(
+    reference_audio: str | None,
+    previous_take: str | None,
+    current_take: str | None,
+    prepared_state: dict[str, Any] | None,
+    use_prepared_audio: bool,
+    catalog_source: str,
+    window_s: float,
+    hop_s: float,
+    min_match_score: float,
+    min_match_margin: float,
+    min_coverage_score: float,
+) -> tuple[Any, ...]:
+    prepared_state = prepared_state or {}
+    if use_prepared_audio:
+        reference_path = prepared_state.get("reference_analysis") or reference_audio
+        previous_path = prepared_state.get("previous_analysis") or previous_take
+        current_path = prepared_state.get("current_analysis") or current_take
+    else:
+        reference_path = reference_audio
+        previous_path = previous_take
+        current_path = current_take
+    result = lab_run_matched_progress(
+        reference_path,
+        previous_path,
+        current_path,
+        OUTPUT_DIR,
+        catalog_source=catalog_source,
+        window_s=float(window_s),
+        hop_s=float(hop_s),
+        min_match_score=float(min_match_score),
+        min_match_margin=float(min_match_margin),
+        min_coverage_score=float(min_coverage_score),
+    )
+    (
+        status,
+        summary,
+        section,
+        metrics,
+        gates,
+        pitch_plot,
+        coverage_plot,
+        reference_clip,
+        previous_clip,
+        current_clip,
+        details,
+    ) = result
+    copy_report = _matched_progress_copy_report(
+        status,
+        summary,
+        section,
+        metrics,
+        gates,
+        reference_clip=reference_clip,
+        previous_clip=previous_clip,
+        current_clip=current_clip,
+        details=details,
+    )
+    return (
+        status,
+        summary,
+        section,
+        metrics,
+        gates,
+        pitch_plot,
+        coverage_plot,
+        reference_clip,
+        previous_clip,
+        current_clip,
+        details,
+        copy_report,
+    )
+
+
+def _matched_progress_copy_report(
+    status: str,
+    summary: pd.DataFrame,
+    section: pd.DataFrame,
+    metrics: pd.DataFrame,
+    gates: pd.DataFrame,
+    *,
+    reference_clip: str | None,
+    previous_clip: str | None,
+    current_clip: str | None,
+    details: dict[str, Any],
+) -> str:
+    lines = [
+        "# Matched Progress Scoring Report",
+        "",
+        "## Status",
+        str(status or ""),
+        "",
+        "## Interpretation Context",
+        "Rows named previous/current follow the UI inputs. If you set previous=cover and current=original/reference, deltas mean original/reference minus cover.",
+        "",
+        "## Progress Summary",
+        _dataframe_csv_text(summary),
+        "",
+        "## Selected Reference Section",
+        _dataframe_csv_text(section),
+        "",
+        "## Detailed Metrics",
+        _dataframe_csv_text(metrics),
+        "",
+        "## Confidence Gates",
+        _dataframe_csv_text(gates),
+        "",
+        "## Clips",
+        f"reference_clip,{reference_clip or ''}",
+        f"previous_clip,{previous_clip or ''}",
+        f"current_clip,{current_clip or ''}",
+        "",
+        "## Verdict Details",
+        json.dumps(details or {}, indent=2, sort_keys=True),
+    ]
+    return "\n".join(lines)
+
+
+def _dataframe_csv_text(frame: pd.DataFrame) -> str:
+    if frame is None or frame.empty:
+        return "(empty)"
+    return frame.to_csv(index=False).strip()
+
+
 def run_fingerprinting_lab_ui(
     audio_preview_state: dict[str, Any] | None,
     expected_title: str,
@@ -2420,6 +2547,114 @@ def run_acrcloud_fingerprinting_lab_ui(
         original_audio_path=original_audio_path,
         recognition_audio_path=audio_path,
         preprocessing_notes=preprocessing_notes,
+    )
+
+
+def run_long_session_segmentation_ui(
+    source_choice: str,
+    uploaded_recording: str | None,
+    current_take: str | None,
+    prepared_state: dict[str, Any] | None,
+    use_demucs_instrumental: bool,
+    demucs_model: str,
+    demucs_device: str,
+    provider: str,
+    window_s: float,
+    hop_s: float,
+    max_windows: int,
+    rms_frame_s: float,
+    rms_hop_s: float,
+    tempo_window_s: float,
+    tempo_hop_s: float,
+) -> tuple[Any, ...]:
+    original_audio_path = _fingerprinting_source_path(
+        source_choice,
+        uploaded_recording,
+        current_take,
+        prepared_state,
+    )
+    recognition_audio_path, preprocessing_notes = _prepare_fingerprinting_audio(
+        original_audio_path,
+        use_demucs_instrumental=bool(use_demucs_instrumental),
+        demucs_model=demucs_model,
+        demucs_device=demucs_device,
+    )
+    provider_key = {
+        "No recognition (plots only)": "none",
+        "ShazamKit": "shazamkit",
+        "AudD": "audd",
+        "ACRCloud": "acrcloud",
+    }.get(provider, str(provider).casefold())
+    status, intervals, windows, details = lab_run_long_session_segmentation(
+        recognition_audio_path,
+        OUTPUT_DIR,
+        provider=provider_key,
+        window_s=float(window_s),
+        hop_s=float(hop_s),
+        max_windows=int(max_windows),
+        rms_frame_s=float(rms_frame_s),
+        rms_hop_s=float(rms_hop_s),
+        tempo_window_s=float(tempo_window_s),
+        tempo_hop_s=float(tempo_hop_s),
+    )
+    if preprocessing_notes:
+        status = f"{status}\n\nPreprocessing:\n" + "\n".join(preprocessing_notes[:4])
+    details = dict(details or {})
+    details["original_audio_path"] = original_audio_path
+    details["recognition_audio_path"] = recognition_audio_path
+    details["preprocessing_notes"] = list(preprocessing_notes)
+    clip_paths = [
+        str(clip.get("clip_path"))
+        for clip in details.get("interval_clips", [])
+        if clip.get("clip_path")
+    ]
+    weak_candidates = pd.DataFrame(details.get("weak_candidates", []))
+    return (
+        status,
+        intervals,
+        weak_candidates,
+        windows,
+        details.get("timeline_plot_path"),
+        clip_paths,
+        details.get("best_interval_clip_path"),
+        details,
+    )
+
+
+def run_fingerprint_diagnostics_ui(
+    provider: str,
+    csv_upload: str | None,
+    csv_text: str,
+    original_recording: str | None,
+    recording_duration_s: float,
+    request_budget: int,
+) -> tuple[Any, ...]:
+    provider_key = {
+        "ShazamKit": "shazamkit",
+        "AudD": "audd",
+        "ACRCloud": "acrcloud",
+    }.get(provider, str(provider).casefold())
+    csv_source = csv_upload or csv_text
+    duration = float(recording_duration_s) if recording_duration_s and recording_duration_s > 0 else None
+    status, summary, weak, sweeps, recommendations, preview_files, first_preview, details = (
+        lab_run_fingerprint_diagnostics(
+            csv_source,
+            OUTPUT_DIR,
+            provider=provider_key,
+            recording_duration_s=duration,
+            original_audio_path=original_recording,
+            request_budget=int(request_budget),
+        )
+    )
+    return (
+        status,
+        summary,
+        weak,
+        sweeps,
+        recommendations,
+        preview_files,
+        first_preview,
+        details,
     )
 
 
@@ -3596,6 +3831,144 @@ Search for the comparable phrase or section before scoring. This is the lab for 
                             ],
                         )
 
+                    with gr.Tab("Matched Progress Scoring Lab"):
+                        gr.Markdown(
+                            """
+## Matched Progress Scoring
+
+Compare previous and current takes only after selecting a comparable reference section. This is the defensible progress path:
+
+```text
+reference + previous + current
+-> matched section
+-> cropped previous/current windows
+-> reference-relative score deltas
+```
+        """
+                        )
+                        with gr.Row():
+                            progress_catalog_source = gr.Radio(
+                                ["Uploaded reference sections", "Demo catalog"],
+                                value="Uploaded reference sections",
+                                label="Reference section source",
+                            )
+                            progress_use_prepared = gr.Checkbox(
+                                label="Use prepared analysis audio",
+                                value=True,
+                            )
+                        with gr.Row():
+                            progress_window = gr.Slider(
+                                5,
+                                45,
+                                value=20,
+                                step=5,
+                                label="Reference section window seconds",
+                            )
+                            progress_hop = gr.Slider(
+                                1,
+                                20,
+                                value=10,
+                                step=1,
+                                label="Reference section hop seconds",
+                            )
+                        with gr.Accordion("Confidence gates", open=False):
+                            with gr.Row():
+                                progress_min_match_score = gr.Slider(
+                                    0,
+                                    100,
+                                    value=70,
+                                    step=1,
+                                    label="Minimum match score",
+                                )
+                                progress_min_match_margin = gr.Slider(
+                                    0,
+                                    30,
+                                    value=8,
+                                    step=1,
+                                    label="Minimum top-two margin",
+                                )
+                                progress_min_coverage = gr.Slider(
+                                    0,
+                                    100,
+                                    value=45,
+                                    step=1,
+                                    label="Minimum coverage",
+                                )
+                        progress_button = gr.Button("Run Matched Progress Scoring", variant="primary")
+                        progress_status = gr.Markdown()
+                        progress_summary = gr.Dataframe(label="Progress summary", wrap=True)
+                        progress_section = gr.Dataframe(label="Selected reference section", wrap=True)
+                        progress_metrics = gr.Dataframe(label="Detailed metrics", wrap=True)
+                        progress_gates = gr.Dataframe(label="Confidence gates", wrap=True)
+                        with gr.Row():
+                            progress_pitch_plot = gr.Image(
+                                label="Reference vs previous vs current pitch",
+                                type="filepath",
+                            )
+                            progress_coverage_plot = gr.Image(
+                                label="Matched-section voiced coverage",
+                                type="filepath",
+                            )
+                        with gr.Row():
+                            progress_reference_clip = gr.Audio(
+                                label="Matched reference clip",
+                                type="filepath",
+                                interactive=False,
+                            )
+                            progress_previous_clip = gr.Audio(
+                                label="Matched previous clip",
+                                type="filepath",
+                                interactive=False,
+                            )
+                            progress_current_clip = gr.Audio(
+                                label="Matched current clip",
+                                type="filepath",
+                                interactive=False,
+                            )
+                        progress_json = gr.JSON(label="Matched progress details")
+                        progress_copy_report = gr.Textbox(
+                            label="Copyable matched-progress report",
+                            lines=12,
+                            interactive=False,
+                        )
+                        progress_copy_button = gr.Button("Copy Matched Progress Report")
+                        progress_button.click(
+                            run_matched_progress_lab_ui,
+                            inputs=[
+                                reference_audio,
+                                previous_take,
+                                current_take,
+                                prepared_state,
+                                progress_use_prepared,
+                                progress_catalog_source,
+                                progress_window,
+                                progress_hop,
+                                progress_min_match_score,
+                                progress_min_match_margin,
+                                progress_min_coverage,
+                            ],
+                            outputs=[
+                                progress_status,
+                                progress_summary,
+                                progress_section,
+                                progress_metrics,
+                                progress_gates,
+                                progress_pitch_plot,
+                                progress_coverage_plot,
+                                progress_reference_clip,
+                                progress_previous_clip,
+                                progress_current_clip,
+                                progress_json,
+                                progress_copy_report,
+                            ],
+                        )
+                        progress_copy_button.click(
+                            fn=None,
+                            inputs=[progress_copy_report],
+                            outputs=[],
+                            js="(text) => navigator.clipboard.writeText(text || '')",
+                        )
+
                     with gr.Tab("Song Identification Lab"):
                         gr.Markdown(
                             """
@@ -3743,6 +4116,231 @@ compare short valid recognition windows across providers.
 """
                 )
                 with gr.Tabs():
+                    with gr.Tab("Long Session Segmentation"):
+                        gr.Markdown(
+                            """
+## Long Session Segmentation
+
+Find song-sized intervals inside a long karaoke recording. This identifies the backing-track recording and produces handoff clips; it does not score singing quality by itself.
+Use 10-12s windows and a 5s hop before treating a no-match result as meaningful.
+"""
+                        )
+                        with gr.Row():
+                            session_source = gr.Radio(
+                                ["Use current take", "Use prepared current audio", "Upload separate recording"],
+                                value="Use current take",
+                                label="Long recording source",
+                            )
+                            session_upload = gr.Audio(
+                                label="Long karaoke recording",
+                                type="filepath",
+                            )
+                            session_provider = gr.Radio(
+                                ["No recognition (plots only)", "ShazamKit", "AudD", "ACRCloud"],
+                                value="No recognition (plots only)",
+                                label="Recognition provider",
+                            )
+                        with gr.Row():
+                            session_window_s = gr.Slider(
+                                3,
+                                12,
+                                value=10,
+                                step=1,
+                                label="Window length seconds",
+                            )
+                            session_hop_s = gr.Slider(
+                                2,
+                                30,
+                                value=5,
+                                step=1,
+                                label="Window hop seconds",
+                            )
+                            session_max_windows = gr.Slider(
+                                1,
+                                500,
+                                value=120,
+                                step=1,
+                                label="Max windows / API calls",
+                            )
+                        with gr.Row():
+                            session_use_demucs = gr.Checkbox(
+                                label="Use Demucs accompaniment stem",
+                                value=False,
+                            )
+                            session_demucs_model = gr.Dropdown(
+                                ["htdemucs", "htdemucs_ft", "mdx_extra", "mdx_q"],
+                                value="htdemucs",
+                                label="Demucs model",
+                            )
+                            session_demucs_device = gr.Dropdown(
+                                ["cpu", "mps", "cuda"],
+                                value="cpu",
+                                label="Device",
+                            )
+                        with gr.Tabs():
+                            with gr.Tab("RMS/BPM Hyperparameters"):
+                                with gr.Row():
+                                    session_rms_frame_s = gr.Slider(
+                                        0.05,
+                                        2.0,
+                                        value=0.25,
+                                        step=0.05,
+                                        label="RMS frame seconds",
+                                    )
+                                    session_rms_hop_s = gr.Slider(
+                                        0.05,
+                                        1.0,
+                                        value=0.1,
+                                        step=0.05,
+                                        label="RMS hop seconds",
+                                    )
+                                with gr.Row():
+                                    session_tempo_window_s = gr.Slider(
+                                        3,
+                                        30,
+                                        value=5,
+                                        step=1,
+                                        label="BPM window seconds",
+                                    )
+                                    session_tempo_hop_s = gr.Slider(
+                                        1,
+                                        30,
+                                        value=5,
+                                        step=1,
+                                        label="BPM hop seconds",
+                                    )
+                        session_button = gr.Button("Run Long Session Segmentation", variant="primary")
+                        session_status = gr.Markdown()
+                        session_timeline = gr.Image(
+                            label="Detected song intervals + RMS energy + tempo",
+                            type="filepath",
+                        )
+                        session_intervals = gr.Dataframe(label="Detected song intervals", wrap=True)
+                        session_weak_candidates = gr.Dataframe(label="Rejected weak candidates", wrap=True)
+                        session_windows = gr.Dataframe(label="Raw recognition windows", wrap=True)
+                        session_clip_files = gr.Files(
+                            label="Detected interval clips",
+                            interactive=False,
+                        )
+                        session_best_clip = gr.Audio(
+                            label="Best interval clip for matching/scoring handoff",
+                            type="filepath",
+                            interactive=False,
+                        )
+                        session_details = gr.JSON(label="Segmentation details")
+                        gr.Markdown(
+                            """
+Use the best interval clip as the next input to Song Identification, Phrase / Section Matching, or Scoring. Trust the handoff only when the timeline and clip audio match the song you expected.
+"""
+                        )
+                        session_button.click(
+                            run_long_session_segmentation_ui,
+                            inputs=[
+                                session_source,
+                                session_upload,
+                                current_take,
+                                prepared_state,
+                                session_use_demucs,
+                                session_demucs_model,
+                                session_demucs_device,
+                                session_provider,
+                                session_window_s,
+                                session_hop_s,
+                                session_max_windows,
+                                session_rms_frame_s,
+                                session_rms_hop_s,
+                                session_tempo_window_s,
+                                session_tempo_hop_s,
+                            ],
+                            outputs=[
+                                session_status,
+                                session_intervals,
+                                session_weak_candidates,
+                                session_windows,
+                                session_timeline,
+                                session_clip_files,
+                                session_best_clip,
+                                session_details,
+                            ],
+                        )
+
+                    with gr.Tab("Diagnostics / Recovery"):
+                        gr.Markdown(
+                            """
+## Diagnostics / Recovery
+
+Paste or upload saved fingerprint rows to explain failed scans without rerunning a provider. Weak candidates are clues for focused rescans, not accepted song intervals.
+"""
+                        )
+                        with gr.Row():
+                            diag_provider = gr.Radio(
+                                ["ShazamKit", "AudD", "ACRCloud"],
+                                value="ACRCloud",
+                                label="Provider",
+                            )
+                            diag_duration = gr.Number(
+                                value=0,
+                                label="Recording duration seconds",
+                                precision=1,
+                            )
+                            diag_budget = gr.Slider(
+                                1,
+                                500,
+                                value=120,
+                                step=1,
+                                label="Recovery request budget",
+                            )
+                        diag_csv_upload = gr.File(
+                            label="Fingerprint CSV",
+                            type="filepath",
+                        )
+                        diag_csv_text = gr.Textbox(
+                            label="Paste fingerprint rows",
+                            lines=8,
+                            placeholder="acrcloud,480,485,matched,true,Title,Artist,isrc:...,0.34,/tmp/window.wav,window.wav,",
+                        )
+                        diag_original_audio = gr.Audio(
+                            label="Original long recording for preview clips",
+                            type="filepath",
+                        )
+                        diag_button = gr.Button("Run Diagnostics", variant="primary")
+                        diag_status = gr.Markdown()
+                        diag_summary = gr.Dataframe(label="Diagnostic summary", wrap=True)
+                        diag_weak = gr.Dataframe(label="Weak candidates", wrap=True)
+                        diag_sweeps = gr.Dataframe(label="Recovery sweeps", wrap=True)
+                        diag_recommendations = gr.Dataframe(label="Recommendations", wrap=True)
+                        diag_preview_files = gr.Files(
+                            label="Preview recovery windows",
+                            interactive=False,
+                        )
+                        diag_first_preview = gr.Audio(
+                            label="First recovery preview",
+                            type="filepath",
+                            interactive=False,
+                        )
+                        diag_details = gr.JSON(label="Diagnostic details")
+                        diag_button.click(
+                            run_fingerprint_diagnostics_ui,
+                            inputs=[
+                                diag_provider,
+                                diag_csv_upload,
+                                diag_csv_text,
+                                diag_original_audio,
+                                diag_duration,
+                                diag_budget,
+                            ],
+                            outputs=[
+                                diag_status,
+                                diag_summary,
+                                diag_weak,
+                                diag_sweeps,
+                                diag_recommendations,
+                                diag_preview_files,
+                                diag_first_preview,
+                                diag_details,
+                            ],
+                        )
+
                     with gr.Tab("ShazamKit"):
                         gr.Markdown(
                             """

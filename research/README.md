@@ -6,6 +6,13 @@ This Python prototype now contains two linked research demos:
   optionally a previous take, against a known reference section.
 - **Prototype B: Song & Section Matching** ranks likely song/section candidates
   before handing the best matched section into the scorer.
+- **Prototype C: Long-Session Segmentation** scans a long karaoke recording,
+  clusters recognized windows into song intervals, and exports playable clips
+  for matching/scoring handoff.
+- **Prototype D: Matched-Section Progress Scoring** matches previous/current
+  takes to the same reference section before reporting progress deltas.
+- **Prototype E: Fingerprinting Diagnostics & Recovery** explains failed
+  long-session scans and suggests focused rescans before segmentation.
 
 It is optimized for a reliable local demo first, with private real-song experiments
 kept out of Git.
@@ -103,8 +110,65 @@ stage execution and visible processing time for audio preparation, evaluation,
 and matching. Use it when Streamlit's rerun model feels too opaque for real-song
 experiments.
 
+Open **Fingerprinting > Long Session Segmentation** to test the karaoke-room
+workflow:
+
+1. Select a long recording source or upload a private long recording.
+2. Choose a recognition provider: ShazamKit, AudD, or ACRCloud.
+3. Use 10 second windows and 5 second hops as the starting preset.
+4. Run segmentation and inspect the timeline, interval table, raw windows, and
+   generated interval clips.
+5. Use the best interval clip as the next input to song/section matching or
+   scoring.
+
+This identifies backing-track song intervals. It does not by itself say whether
+the singer improved.
+
+Open **Fingerprinting > Diagnostics / Recovery** when a long-session run returns
+mostly `no_match` rows:
+
+1. Paste or upload the raw fingerprint table.
+2. Enter the recording duration if the CSV does not include it.
+3. Inspect flags such as `sparse_scan`, `short_windows`,
+   `singleton_candidate`, and `low_confidence_match`.
+4. Use the recommended recovery sweeps to rerun denser windows or focused scans
+   around weak clues.
+5. Treat weak candidates as clues only; score clips only after repeated
+   high-confidence windows create an accepted interval.
+
+Open **Preprocessing > Matched Progress Scoring Lab** to test the progress
+workflow:
+
+1. Load the synthetic demo files or upload private reference/previous/current
+   audio.
+2. Run audio preparation first if you want to use prepared vocal-analysis files.
+3. Choose **Uploaded reference sections** for private reference audio, or
+   **Demo catalog** for the safe synthetic section catalog.
+4. Run matched progress scoring.
+5. Inspect the selected section, confidence gates, pitch overlay, coverage plot,
+   and matched audio clips before trusting the verdict.
+
+This is the current defensible progress path: previous and current are scored
+against the same matched reference section. A low-confidence or ambiguous match
+returns `insufficient confidence` instead of a strong improvement claim.
+
 ## Private Real-Song Tests
 
 Put private BYO reference audio and vocal takes in `data/private/`. The app can
 experimentally extract a dense baseline from uploaded reference audio, but the
 reliable local demo path is the symbolic baseline in `data/demo/`.
+
+For long-session private tests, keep raw karaoke/car recordings in
+`data/private/` and do not commit generated provider outputs. Automated tests use
+fake recognizers, so TA/local verification does not require paid provider keys.
+
+For matched-progress private tests, keep the clips short and comparable:
+
+```text
+reference: guide vocal or melody-focused phrase
+previous:  same phrase from an earlier session
+current:   same phrase from the latest session
+```
+
+Phase 1 interval clips can be used as previous/current uploads, but the Phase 2
+score is only meaningful when the matched section and pitch overlay look correct.

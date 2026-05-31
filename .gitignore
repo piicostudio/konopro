@@ -17,6 +17,7 @@ research/.venv/
 research/data/demo/*.wav
 research/data/demo/*.csv
 research/data/demo/metadata.json
+docs/*
 
 # Private local experiments may use copyrighted or personally recorded audio.
 research/data/private/*

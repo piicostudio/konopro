@@ -20,6 +20,12 @@ from konopro_research.contour_scoring import (
     contour_timing_debug,
 )
 from konopro_research.demo_data import synthesize_take
+from konopro_research.fingerprint_diagnostics import (
+    diagnose_fingerprint_rows,
+    load_fingerprint_rows_csv,
+    plan_recovery_sweeps,
+)
+from konopro_research.fingerprinting import prepare_fingerprint_windows
 from konopro_research.matching import (
     build_demo_section_catalog,
     extract_matching_query,
@@ -27,9 +33,17 @@ from konopro_research.matching import (
     split_contour_into_sections,
 )
 from konopro_research.pitch import PitchContour, clean_pitch_contour, extract_pitch
+from konopro_research.plots import plot_matched_progress_coverage, plot_matched_progress_overlay
+from konopro_research.progress_scoring import score_matched_section_progress
 from konopro_research.quality import analyze_baseline_quality, summarize_audio
 from konopro_research.reference_audio import extract_reference_audio
 from konopro_research.scoring import score_take
+from konopro_research.session_segmentation import (
+    SessionSegmentationResult,
+    plot_session_segmentation,
+    segment_long_recording,
+    write_interval_clips,
+)
 
 
 DEFAULT_PITCH_KWARGS = {
@@ -269,6 +283,469 @@ def run_song_identification_lab(
     return status, table, result.to_dict()
 
 
+def run_long_session_segmentation_lab(
+    audio_path: str | None,
+    output_dir: str | Path,
+    *,
+    provider: str,
+    window_s: float,
+    hop_s: float,
+    max_windows: int | None,
+    use_whole: bool = False,
+    recognizer: Any | None = None,
+    generate_artifacts: bool = True,
+    rms_frame_s: float = 0.25,
+    rms_hop_s: float = 0.1,
+    tempo_window_s: float = 5.0,
+    tempo_hop_s: float = 5.0,
+) -> tuple[str, pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    if not audio_path:
+        return "No long recording selected.", pd.DataFrame(), pd.DataFrame(), {}
+
+    started = time.perf_counter()
+    provider_key = provider.strip().casefold()
+    if provider_key in {"none", "skip", "off", "no recognition", "plots only"}:
+        audio, sample_rate = load_audio(audio_path, target_sr=22050)
+        duration_s = len(audio) / sample_rate if sample_rate else 0.0
+        result = SessionSegmentationResult(
+            windows=(),
+            intervals=(),
+            recording_duration_s=duration_s,
+            hop_s=float(hop_s),
+            warnings=("Recognition provider skipped; plotted signal diagnostics only.",),
+        )
+    else:
+        result = segment_long_recording(
+            audio_path,
+            output_dir,
+            provider=provider,
+            window_s=float(window_s),
+            hop_s=float(hop_s),
+            max_windows=max_windows,
+            recognizer=recognizer,
+            use_whole=bool(use_whole),
+        )
+    intervals_df = pd.DataFrame([interval.to_dict() for interval in result.intervals])
+    windows_df = pd.DataFrame([window.to_dict() for window in result.windows])
+    weak_candidate_count = len(result.weak_candidates)
+    recognized_count = int(sum(1 for window in result.windows if window.recognized))
+    no_match_count = int(sum(1 for window in result.windows if window.status == "no_match"))
+    error_count = int(sum(1 for window in result.windows if window.status == "error"))
+
+    details = result.to_dict()
+    provider_result = result.provider_result
+    if provider_result is not None:
+        details["provider_status"] = provider_result.status
+        details["provider_summary"] = provider_result.summary
+        details["provider_interpretations"] = provider_result.interpretations
+
+    if generate_artifacts:
+        artifact_dir = Path(output_dir) / "session_segmentation"
+        timeline_path = artifact_dir / "session_timeline.png"
+        fig = plot_session_segmentation(
+            result,
+            audio_path=audio_path,
+            rms_frame_s=float(rms_frame_s),
+            rms_hop_s=float(rms_hop_s),
+            tempo_window_s=float(tempo_window_s),
+            tempo_hop_s=float(tempo_hop_s),
+            output_path=timeline_path,
+        )
+        try:
+            import matplotlib.pyplot as plt
+
+            plt.close(fig)
+        except Exception:
+            pass
+        details["timeline_plot_path"] = str(timeline_path)
+        details["signal_diagnostic_params"] = {
+            "rms_frame_s": float(rms_frame_s),
+            "rms_hop_s": float(rms_hop_s),
+            "tempo_window_s": float(tempo_window_s),
+            "tempo_hop_s": float(tempo_hop_s),
+        }
+
+        clips = write_interval_clips(audio_path, result.intervals, artifact_dir / "interval_clips")
+        details["interval_clips"] = [dict(clip) for clip in clips]
+        best_clip = _best_interval_clip(clips)
+        details["best_interval_clip_path"] = best_clip.get("clip_path") if best_clip else None
+
+    warning_text = f" Warning(s): {'; '.join(result.warnings[:3])}" if result.warnings else ""
+    status = (
+        f"Long-session segmentation complete in {time.perf_counter() - started:.2f}s. "
+        f"Intervals: {len(result.intervals)}. "
+        f"Weak candidates: {weak_candidate_count}. "
+        f"Recognized windows: {recognized_count}. "
+        f"No-match windows: {no_match_count}. "
+        f"Error windows: {error_count}."
+        f"{warning_text}"
+    )
+    return status, intervals_df, windows_df, details
+
+
+def run_fingerprint_diagnostics_lab(
+    csv_source: str | Path | None,
+    output_dir: str | Path,
+    *,
+    provider: str,
+    recording_duration_s: float | None = None,
+    original_audio_path: str | Path | None = None,
+    request_budget: int = 120,
+    generate_artifacts: bool = True,
+) -> tuple[
+    str,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    list[str],
+    str | None,
+    dict[str, Any],
+]:
+    if not csv_source or not str(csv_source).strip():
+        return (
+            "No fingerprint CSV rows provided.",
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            [],
+            None,
+            {},
+        )
+
+    started = time.perf_counter()
+    rows = load_fingerprint_rows_csv(csv_source)
+    report = diagnose_fingerprint_rows(
+        rows,
+        provider=provider,
+        recording_duration_s=recording_duration_s,
+    )
+    sweeps = plan_recovery_sweeps(
+        report,
+        recording_duration_s=recording_duration_s,
+        request_budget=int(request_budget),
+    )
+    summary_df = pd.DataFrame(
+        [
+            {
+                **report.profile.to_dict(),
+                "can_segment": report.can_segment,
+                "confidence_level": report.confidence_level,
+                "flags": ", ".join(flag.code for flag in report.flags),
+            }
+        ]
+    )
+    weak_df = pd.DataFrame([candidate.to_dict() for candidate in report.weak_candidates])
+    sweeps_df = pd.DataFrame([sweep.to_dict() for sweep in sweeps])
+    recommendations_df = pd.DataFrame([dict(item) for item in report.recommendations])
+    details = report.to_dict()
+    details["recovery_sweeps"] = [sweep.to_dict() for sweep in sweeps]
+    details["input_rows"] = rows
+
+    preview_files: list[str] = []
+    first_preview: str | None = None
+    if generate_artifacts and original_audio_path and sweeps:
+        top_sweep = sweeps[0]
+        preview_windows = prepare_fingerprint_windows(
+            original_audio_path,
+            output_dir,
+            mode="Sliding windows",
+            window_s=top_sweep.window_s,
+            hop_s=top_sweep.hop_s,
+            max_windows=min(top_sweep.max_windows, 24),
+            start_offset_s=top_sweep.start_s,
+            window_strategy="From offset",
+            namespace="diagnostics_recovery",
+        )
+        preview_files = [str(row["audio_path"]) for row in preview_windows]
+        first_preview = preview_files[0] if preview_files else None
+        details["preview_windows"] = [dict(row) for row in preview_windows]
+
+    status = (
+        f"Fingerprint diagnostics complete in {time.perf_counter() - started:.2f}s. "
+        f"Rows: {report.profile.tested_windows}. "
+        f"Recognized: {report.profile.recognized_windows}. "
+        f"Weak candidates: {len(report.weak_candidates)}. "
+        f"Can segment: {report.can_segment}."
+    )
+    return (
+        status,
+        summary_df,
+        weak_df,
+        sweeps_df,
+        recommendations_df,
+        preview_files,
+        first_preview,
+        details,
+    )
+
+
+def run_matched_progress_lab(
+    reference_audio: str | None,
+    previous_audio: str | None,
+    current_audio: str | None,
+    output_dir: str | Path,
+    *,
+    catalog_source: str = "Uploaded reference sections",
+    window_s: float = 20.0,
+    hop_s: float = 10.0,
+    min_match_score: float = 70.0,
+    min_match_margin: float = 8.0,
+    min_coverage_score: float = 45.0,
+    generate_artifacts: bool = True,
+) -> tuple[
+    str,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
+    dict[str, Any],
+]:
+    if not previous_audio or not current_audio:
+        return (
+            "Previous and current takes are required.",
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            {},
+        )
+
+    started = time.perf_counter()
+    if catalog_source == "Uploaded reference sections" and reference_audio:
+        extraction = extract_reference_audio(
+            reference_audio,
+            pitch_kwargs=DEFAULT_PITCH_KWARGS,
+            clean_kwargs=DEFAULT_CLEAN_KWARGS,
+        )
+        sections = split_contour_into_sections(
+            extraction.contour,
+            song_id="uploaded_reference",
+            song_title=Path(reference_audio).stem,
+            window_s=float(window_s),
+            hop_s=float(hop_s),
+        )
+    else:
+        sections = build_demo_section_catalog()
+
+    if not sections:
+        return (
+            "No reference sections were available for matched progress scoring.",
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            {"warnings": ["no reference sections"]},
+        )
+
+    result = score_matched_section_progress(
+        previous_audio,
+        current_audio,
+        sections,
+        pitch_kwargs=DEFAULT_PITCH_KWARGS,
+        min_match_score=float(min_match_score),
+        min_match_margin=float(min_match_margin),
+        min_coverage_score=float(min_coverage_score),
+    )
+    details = result.to_dict()
+
+    summary = pd.DataFrame(
+        [
+            {"metric": "Verdict", "value": result.verdict, "delta": ""},
+            {
+                "metric": "Overall diagnostic",
+                "value": result.comparison.current.overall_score,
+                "delta": result.comparison.overall_delta,
+            },
+            {
+                "metric": "Pitch correctness",
+                "value": result.comparison.current.pitch_accuracy_score,
+                "delta": result.comparison.pitch_accuracy_delta,
+            },
+            {
+                "metric": "Technical control",
+                "value": result.comparison.current.technical_control_score,
+                "delta": round(
+                    result.comparison.current.technical_control_score
+                    - result.comparison.previous.technical_control_score,
+                    2,
+                ),
+            },
+            {
+                "metric": "Stability",
+                "value": result.comparison.current.stability_score,
+                "delta": result.comparison.stability_delta,
+            },
+            {
+                "metric": "Coverage",
+                "value": result.comparison.current.coverage_score,
+                "delta": result.comparison.coverage_delta,
+            },
+            {
+                "metric": "Timing",
+                "value": result.comparison.current.timing_score,
+                "delta": result.comparison.timing_delta,
+            },
+        ]
+    )
+    section_table = pd.DataFrame(
+        [
+            {
+                **result.section.to_dict(),
+                "current_match_score": result.current_match.score,
+                "previous_match_score": result.previous_match.score,
+            }
+        ]
+    )
+    metrics = pd.DataFrame(
+        [
+            {
+                "metric": "mean_pitch_error_cents",
+                "previous": result.comparison.previous.mean_pitch_error_cents,
+                "current": result.comparison.current.mean_pitch_error_cents,
+            },
+            {
+                "metric": "estimated_transposition_cents",
+                "previous": result.comparison.previous.estimated_transposition_cents,
+                "current": result.comparison.current.estimated_transposition_cents,
+            },
+            {
+                "metric": "pitch_stability_cents",
+                "previous": result.comparison.previous.pitch_stability_cents,
+                "current": result.comparison.current.pitch_stability_cents,
+            },
+            {
+                "metric": "recording_confidence",
+                "previous": result.comparison.previous.recording_confidence_score,
+                "current": result.comparison.current.recording_confidence_score,
+            },
+        ]
+    )
+    gates = pd.DataFrame(
+        [
+            {
+                "gate": "can_score",
+                "value": result.confidence.can_score,
+                "details": result.confidence.confidence_level,
+            },
+            {
+                "gate": "match_score",
+                "value": result.confidence.match_score,
+                "details": f"min {min_match_score}",
+            },
+            {
+                "gate": "match_margin",
+                "value": result.confidence.match_margin,
+                "details": f"min {min_match_margin}",
+            },
+            {
+                "gate": "coverage",
+                "value": result.confidence.coverage_score,
+                "details": f"min {min_coverage_score}",
+            },
+            {
+                "gate": "recording_confidence",
+                "value": result.confidence.recording_confidence_score,
+                "details": "low values block strong claims",
+            },
+            *[
+                {"gate": "reason", "value": reason, "details": ""}
+                for reason in result.confidence.reasons
+            ],
+        ]
+    )
+
+    pitch_plot: str | None = None
+    coverage_plot: str | None = None
+    reference_clip: str | None = None
+    previous_clip: str | None = None
+    current_clip: str | None = None
+    if generate_artifacts:
+        artifact_dir = Path(output_dir) / "matched_progress"
+        pitch_plot = str(artifact_dir / "matched_progress_pitch.png")
+        coverage_plot = str(artifact_dir / "matched_progress_coverage.png")
+        _save_figure(
+            plot_matched_progress_overlay(
+                result.reference_crop,
+                result.previous_crop,
+                result.current_crop,
+            ),
+            pitch_plot,
+        )
+        _save_figure(
+            plot_matched_progress_coverage(
+                result.reference_crop,
+                result.previous_crop,
+                result.current_crop,
+            ),
+            coverage_plot,
+        )
+        if reference_audio:
+            reference_clip = crop_audio_to_file(
+                reference_audio,
+                artifact_dir / "clips",
+                start_s=result.section.start_s,
+                duration_s=result.section.duration_s,
+                label="reference",
+            )[0]
+        previous_clip = crop_audio_to_file(
+            previous_audio,
+            artifact_dir / "clips",
+            start_s=result.previous_window.start_s,
+            duration_s=result.previous_window.duration_s,
+            label="previous",
+        )[0]
+        current_clip = crop_audio_to_file(
+            current_audio,
+            artifact_dir / "clips",
+            start_s=result.current_window.start_s,
+            duration_s=result.current_window.duration_s,
+            label="current",
+        )[0]
+        details["artifacts"] = {
+            "pitch_plot": pitch_plot,
+            "coverage_plot": coverage_plot,
+            "reference_clip": reference_clip,
+            "previous_clip": previous_clip,
+            "current_clip": current_clip,
+        }
+
+    safety = "unsafe to score" if not result.confidence.can_score else "scoreable"
+    status = (
+        f"Matched progress {safety} in {time.perf_counter() - started:.2f}s. "
+        f"Section: {result.section.display_name}. Verdict: {result.verdict}."
+    )
+    return (
+        status,
+        summary,
+        section_table,
+        metrics,
+        gates,
+        pitch_plot,
+        coverage_plot,
+        reference_clip,
+        previous_clip,
+        current_clip,
+        details,
+    )
+
+
 def run_timing_lab(
     reference_audio: str | None,
     current_audio: str | None,
@@ -300,6 +777,31 @@ def run_timing_lab(
     )
     status = f"Timing analysis complete in {time.perf_counter() - started:.2f}s."
     return status, table, debug
+
+
+def _best_interval_clip(clips: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    if not clips:
+        return {}
+    return max(
+        clips,
+        key=lambda clip: (
+            float(clip.get("confidence") or 0.0),
+            float(clip.get("end_s") or 0.0) - float(clip.get("start_s") or 0.0),
+        ),
+    )
+
+
+def _save_figure(fig: Any, path: str | Path) -> str:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=160, bbox_inches="tight")
+    try:
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+    except Exception:
+        pass
+    return str(path)
 
 
 def run_scoring_calibration_lab(

@@ -145,6 +145,47 @@ def plot_section_match(
     return fig
 
 
+def plot_matched_progress_overlay(
+    reference: PitchContour,
+    previous: PitchContour,
+    current: PitchContour,
+):
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(10, 4.8))
+    _plot_contour(ax, reference, "Reference section", "#111827", linewidth=2.0)
+    _plot_contour(ax, previous, "Previous matched take", "#d97706")
+    _plot_contour(ax, current, "Current matched take", "#2563eb")
+    ax.set_xlabel("Matched section time (s)")
+    ax.set_ylabel("Pitch (MIDI note)")
+    ax.set_title("Matched-section pitch overlay")
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="best")
+    fig.tight_layout()
+    return fig
+
+
+def plot_matched_progress_coverage(
+    reference: PitchContour,
+    previous: PitchContour,
+    current: PitchContour,
+):
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(10, 2.8))
+    _voiced_row(ax, reference, y=2, label="Reference voiced", color="#111827")
+    _voiced_row(ax, previous, y=1, label="Previous voiced", color="#d97706")
+    _voiced_row(ax, current, y=0, label="Current voiced", color="#2563eb")
+    ax.set_yticks([0, 1, 2])
+    ax.set_yticklabels(["Current", "Previous", "Reference"])
+    ax.set_ylim(-0.6, 2.6)
+    ax.set_xlabel("Matched section time (s)")
+    ax.set_title("Matched-section voiced coverage")
+    ax.grid(True, axis="x", alpha=0.25)
+    fig.tight_layout()
+    return fig
+
+
 def _plot_baseline(ax, baseline: MelodyBaseline) -> None:
     for note in baseline.notes:
         ax.hlines(
