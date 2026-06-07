@@ -8,6 +8,7 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .ipynb_checkpoints/
+.build/
 
 # Local Python environments created inside the research prototype.
 research/.venv/
@@ -30,3 +31,4 @@ research/.cache/
 
 # Local Streamlit state.
 .streamlit/
+.planning/*
