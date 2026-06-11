@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlmodel import Session
 
 from konopro_backend.config import BackendSettings
@@ -96,6 +97,27 @@ def get_session(
     return audio_session
 
 
+@router.get("/{session_id}/audio")
+def download_session_audio(
+    session_id: str,
+    beta_user_key: str = Depends(get_beta_user_key),
+    db: Session = Depends(get_db),
+    storage: LocalAudioStorage = Depends(get_storage),
+) -> FileResponse:
+    user = get_or_create_beta_user(db, beta_user_key)
+    audio_session = get_audio_session(db, session_id, user_id=user.id)
+    if audio_session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    path = storage.path_for(audio_session.storage_key)
+    if not path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio file not found")
+    return FileResponse(
+        path,
+        media_type=audio_session.content_type,
+        filename=audio_session.original_filename,
+    )
+
+
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_session(
     session_id: str,
@@ -110,4 +132,3 @@ def delete_session(
     storage.delete(audio_session.storage_key)
     soft_delete_audio_session(db, session_id, user_id=user.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-

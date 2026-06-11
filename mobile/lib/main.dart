@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart';
 
 void main() {
   runApp(const KonoProApp());
@@ -28,6 +29,51 @@ typedef SessionAnalysisClient =
       String betaIdentity,
       String sessionId,
     );
+typedef SegmentPlaybackControllerFactory = SegmentPlaybackController Function();
+
+abstract class SegmentPlaybackController {
+  Future<void> playSegment({
+    required Uri audioUri,
+    required String betaIdentity,
+    required DetectedSongSegment segment,
+  });
+
+  Future<void> pause();
+
+  Future<void> dispose();
+}
+
+class JustAudioSegmentPlaybackController implements SegmentPlaybackController {
+  JustAudioSegmentPlaybackController({AudioPlayer? player})
+    : _player = player ?? AudioPlayer();
+
+  final AudioPlayer _player;
+
+  @override
+  Future<void> playSegment({
+    required Uri audioUri,
+    required String betaIdentity,
+    required DetectedSongSegment segment,
+  }) async {
+    await _player.setAudioSource(
+      ClippingAudioSource(
+        start: _durationFromSeconds(segment.startS),
+        end: _durationFromSeconds(segment.endS),
+        child: ProgressiveAudioSource(
+          audioUri,
+          headers: {'X-Konopro-Beta-User': betaIdentity},
+        ),
+      ),
+    );
+    await _player.play();
+  }
+
+  @override
+  Future<void> pause() => _player.pause();
+
+  @override
+  Future<void> dispose() => _player.dispose();
+}
 
 class BackendHealth {
   const BackendHealth({required this.status, required this.environment});
@@ -566,6 +612,17 @@ String _joinUriPath(String basePath, String childPath) {
   return '$cleanBase/$cleanChild';
 }
 
+Uri? _sessionAudioUri(Uri? baseUrl, String sessionId) {
+  if (baseUrl == null) {
+    return null;
+  }
+  return baseUrl.replace(
+    path: _joinUriPath(baseUrl.path, '/v1/sessions/$sessionId/audio'),
+    queryParameters: null,
+    fragment: null,
+  );
+}
+
 class KonoProApp extends StatelessWidget {
   const KonoProApp({
     super.key,
@@ -575,6 +632,7 @@ class KonoProApp extends StatelessWidget {
     this.audioFilePicker,
     this.jobStatusClient,
     this.sessionAnalysisClient,
+    this.segmentPlaybackControllerFactory,
     this.jobPollInterval = const Duration(seconds: 2),
   });
 
@@ -584,6 +642,7 @@ class KonoProApp extends StatelessWidget {
   final AudioFilePicker? audioFilePicker;
   final JobStatusClient? jobStatusClient;
   final SessionAnalysisClient? sessionAnalysisClient;
+  final SegmentPlaybackControllerFactory? segmentPlaybackControllerFactory;
   final Duration jobPollInterval;
 
   @override
@@ -620,6 +679,9 @@ class KonoProApp extends StatelessWidget {
         jobStatusClient: jobStatusClient ?? defaultJobStatusClient,
         sessionAnalysisClient:
             sessionAnalysisClient ?? defaultSessionAnalysisClient,
+        segmentPlaybackControllerFactory:
+            segmentPlaybackControllerFactory ??
+            () => JustAudioSegmentPlaybackController(),
         jobPollInterval: jobPollInterval,
       ),
     );
@@ -634,6 +696,7 @@ class KonoProShell extends StatefulWidget {
     required this.audioFilePicker,
     required this.jobStatusClient,
     required this.sessionAnalysisClient,
+    required this.segmentPlaybackControllerFactory,
     required this.jobPollInterval,
     super.key,
   });
@@ -644,6 +707,7 @@ class KonoProShell extends StatefulWidget {
   final AudioFilePicker audioFilePicker;
   final JobStatusClient jobStatusClient;
   final SessionAnalysisClient sessionAnalysisClient;
+  final SegmentPlaybackControllerFactory segmentPlaybackControllerFactory;
   final Duration jobPollInterval;
 
   @override
@@ -679,6 +743,8 @@ class _KonoProShellState extends State<KonoProShell> {
         audioFilePicker: widget.audioFilePicker,
         jobStatusClient: widget.jobStatusClient,
         sessionAnalysisClient: widget.sessionAnalysisClient,
+        segmentPlaybackControllerFactory:
+            widget.segmentPlaybackControllerFactory,
         jobPollInterval: widget.jobPollInterval,
       ),
       const FeedPlaceholderScreen(),
@@ -1128,6 +1194,10 @@ String _formatBytes(int bytes) {
   return '${(kib / 1024).toStringAsFixed(1)} MB';
 }
 
+Duration _durationFromSeconds(double seconds) {
+  return Duration(milliseconds: (seconds * 1000).round());
+}
+
 String _shortId(String id) {
   if (id.length <= 8) {
     return id;
@@ -1307,6 +1377,7 @@ class RecordFlowScreen extends StatefulWidget {
     required this.audioFilePicker,
     required this.jobStatusClient,
     required this.sessionAnalysisClient,
+    required this.segmentPlaybackControllerFactory,
     required this.jobPollInterval,
     super.key,
   });
@@ -1317,6 +1388,7 @@ class RecordFlowScreen extends StatefulWidget {
   final AudioFilePicker audioFilePicker;
   final JobStatusClient jobStatusClient;
   final SessionAnalysisClient sessionAnalysisClient;
+  final SegmentPlaybackControllerFactory segmentPlaybackControllerFactory;
   final Duration jobPollInterval;
 
   @override
@@ -1483,6 +1555,7 @@ class _RecordFlowScreenState extends State<RecordFlowScreen> {
       analysis: _analysis,
       uploadError: _uploadError,
       analysisError: _analysisError,
+      segmentPlaybackControllerFactory: widget.segmentPlaybackControllerFactory,
       isPicking: _isPicking,
       isUploading: _isUploading,
       isPollingJob: _isPollingJob,
@@ -1567,6 +1640,7 @@ class RecordingScreen extends StatelessWidget {
     required this.analysis,
     required this.uploadError,
     required this.analysisError,
+    required this.segmentPlaybackControllerFactory,
     required this.isPicking,
     required this.isUploading,
     required this.isPollingJob,
@@ -1583,6 +1657,7 @@ class RecordingScreen extends StatelessWidget {
   final SessionAnalysis? analysis;
   final String? uploadError;
   final String? analysisError;
+  final SegmentPlaybackControllerFactory segmentPlaybackControllerFactory;
   final bool isPicking;
   final bool isUploading;
   final bool isPollingJob;
@@ -1628,6 +1703,9 @@ class RecordingScreen extends StatelessWidget {
           currentJob: currentJob,
           analysis: analysis,
           analysisError: analysisError,
+          backendUrl: backendUrl,
+          betaIdentity: betaIdentity,
+          segmentPlaybackControllerFactory: segmentPlaybackControllerFactory,
           isPollingJob: isPollingJob,
         ),
         const SizedBox(height: 16),
@@ -1778,6 +1856,9 @@ class PickedUpCard extends StatelessWidget {
     required this.currentJob,
     required this.analysis,
     required this.analysisError,
+    required this.backendUrl,
+    required this.betaIdentity,
+    required this.segmentPlaybackControllerFactory,
     required this.isPollingJob,
     super.key,
   });
@@ -1786,6 +1867,9 @@ class PickedUpCard extends StatelessWidget {
   final BackendJob? currentJob;
   final SessionAnalysis? analysis;
   final String? analysisError;
+  final Uri? backendUrl;
+  final String betaIdentity;
+  final SegmentPlaybackControllerFactory segmentPlaybackControllerFactory;
   final bool isPollingJob;
 
   @override
@@ -1818,7 +1902,13 @@ class PickedUpCard extends StatelessWidget {
               detail: analysisError!,
             )
           else if (analysis != null)
-            AnalysisResults(analysis: analysis)
+            AnalysisResults(
+              analysis: analysis,
+              audioUri: _sessionAudioUri(backendUrl, uploadResult!.session.id),
+              betaIdentity: betaIdentity,
+              segmentPlaybackControllerFactory:
+                  segmentPlaybackControllerFactory,
+            )
           else
             ProcessingStatusMessage(job: job, isPollingJob: isPollingJob),
         ],
@@ -1851,13 +1941,87 @@ class ProcessingStatusMessage extends StatelessWidget {
   }
 }
 
-class AnalysisResults extends StatelessWidget {
-  const AnalysisResults({required this.analysis, super.key});
+class AnalysisResults extends StatefulWidget {
+  const AnalysisResults({
+    required this.analysis,
+    required this.audioUri,
+    required this.betaIdentity,
+    required this.segmentPlaybackControllerFactory,
+    super.key,
+  });
 
   final SessionAnalysis analysis;
+  final Uri? audioUri;
+  final String betaIdentity;
+  final SegmentPlaybackControllerFactory segmentPlaybackControllerFactory;
+
+  @override
+  State<AnalysisResults> createState() => _AnalysisResultsState();
+}
+
+class _AnalysisResultsState extends State<AnalysisResults> {
+  late final SegmentPlaybackController _playbackController;
+  DetectedSongSegment? _playingSegment;
+  DetectedSongSegment? _loadingSegment;
+  String? _playbackError;
+
+  @override
+  void initState() {
+    super.initState();
+    _playbackController = widget.segmentPlaybackControllerFactory();
+  }
+
+  @override
+  void dispose() {
+    unawaited(_playbackController.dispose());
+    super.dispose();
+  }
+
+  Future<void> _togglePlayback(DetectedSongSegment segment) async {
+    if (_playingSegment == segment) {
+      await _playbackController.pause();
+      if (!mounted) return;
+      setState(() {
+        _playingSegment = null;
+        _playbackError = null;
+      });
+      return;
+    }
+
+    final audioUri = widget.audioUri;
+    if (audioUri == null) {
+      setState(
+        () => _playbackError = 'Connect to the backend before playback.',
+      );
+      return;
+    }
+
+    setState(() {
+      _loadingSegment = segment;
+      _playbackError = null;
+    });
+
+    try {
+      await _playbackController.playSegment(
+        audioUri: audioUri,
+        betaIdentity: widget.betaIdentity,
+        segment: segment,
+      );
+      if (!mounted) return;
+      setState(() => _playingSegment = segment);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _playbackError = error.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _loadingSegment = null);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final analysis = widget.analysis;
     final summary = analysis.summary;
     final segments = analysis.intervals.isNotEmpty
         ? analysis.intervals
@@ -1877,6 +2041,12 @@ class AnalysisResults extends StatelessWidget {
               ? 'Provider: ${analysis.provider}'
               : summary.message,
         ),
+        if (_playbackError != null)
+          SessionMessage(
+            icon: Icons.error_outline,
+            title: 'Playback failed',
+            detail: _playbackError!,
+          ),
         if (segments.isEmpty)
           const SessionMessage(
             icon: Icons.search_off,
@@ -1886,15 +2056,57 @@ class AnalysisResults extends StatelessWidget {
           )
         else
           for (final segment in segments)
-            DetectedTrackRow(
-              title: segment.artist.isEmpty
-                  ? segment.title
-                  : '${segment.title} - ${segment.artist}',
-              time:
-                  '${_formatDuration(segment.startS)} - ${_formatDuration(segment.endS)}',
-              badge: segment.isWeak ? 'weak' : segment.confidenceLabel,
-              subtitle: _segmentSubtitle(segment),
+            PlaybackTrackRow(
+              segment: segment,
+              isPlaying: _playingSegment == segment,
+              isLoading: _loadingSegment == segment,
+              onToggle: () => _togglePlayback(segment),
             ),
+      ],
+    );
+  }
+}
+
+class PlaybackTrackRow extends StatelessWidget {
+  const PlaybackTrackRow({
+    required this.segment,
+    required this.isPlaying,
+    required this.isLoading,
+    required this.onToggle,
+    super.key,
+  });
+
+  final DetectedSongSegment segment;
+  final bool isPlaying;
+  final bool isLoading;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        IconButton(
+          onPressed: isLoading ? null : onToggle,
+          icon: isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(isPlaying ? Icons.pause : Icons.play_arrow),
+          tooltip: isPlaying ? 'Pause segment' : 'Play segment',
+        ),
+        Expanded(
+          child: DetectedTrackRow(
+            title: segment.artist.isEmpty
+                ? segment.title
+                : '${segment.title} - ${segment.artist}',
+            time:
+                '${_formatDuration(segment.startS)} - ${_formatDuration(segment.endS)}',
+            badge: segment.isWeak ? 'weak' : segment.confidenceLabel,
+            subtitle: _segmentSubtitle(segment),
+          ),
+        ),
       ],
     );
   }

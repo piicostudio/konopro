@@ -86,6 +86,20 @@ def test_list_detail_and_cross_user_access(tmp_path):
     assert cross_user_response.status_code == 404
 
 
+def test_download_session_audio_is_owner_scoped(tmp_path):
+    client = _client(tmp_path)
+    upload = _upload(client).json()
+    session_id = upload["session"]["id"]
+
+    owner_response = client.get(f"/v1/sessions/{session_id}/audio", headers=_headers())
+    cross_user_response = client.get(f"/v1/sessions/{session_id}/audio", headers=_headers("other"))
+
+    assert owner_response.status_code == 200
+    assert owner_response.content == b"fake audio"
+    assert owner_response.headers["content-type"].startswith("audio/wav")
+    assert cross_user_response.status_code == 404
+
+
 def test_job_status_is_scoped_to_session_owner(tmp_path):
     client = _client(tmp_path)
     upload = _upload(client).json()

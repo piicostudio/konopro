@@ -357,6 +357,7 @@ void main() {
     Uri? uploadedBaseUrl;
     String? uploadedIdentity;
     PickedAudioFile? uploadedFile;
+    final playbackController = FakeSegmentPlaybackController();
 
     await tester.pumpWidget(
       KonoProApp(
@@ -373,6 +374,7 @@ void main() {
         },
         jobStatusClient: (_, _, _) async => completedJob,
         sessionAnalysisClient: (_, _, _) async => sampleAnalysis,
+        segmentPlaybackControllerFactory: () => playbackController,
       ),
     );
 
@@ -403,6 +405,7 @@ void main() {
   testWidgets('record upload polls job and displays accepted analysis', (
     tester,
   ) async {
+    final playbackController = FakeSegmentPlaybackController();
     final statuses = [
       sampleJob,
       const BackendJob(
@@ -426,6 +429,7 @@ void main() {
         jobStatusClient: (_, _, _) async =>
             statuses[statusIndex++ % statuses.length],
         sessionAnalysisClient: (_, _, _) async => sampleAnalysis,
+        segmentPlaybackControllerFactory: () => playbackController,
         jobPollInterval: Duration.zero,
       ),
     );
@@ -452,11 +456,30 @@ void main() {
     expect(find.text('Demo Song - Demo Artist'), findsOneWidget);
     expect(find.text('0:42 - 4:12'), findsOneWidget);
     expect(find.text('high'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.play_arrow).first);
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      playbackController.audioUri.toString(),
+      'http://127.0.0.1:8000/v1/sessions/session-1/audio',
+    );
+    expect(playbackController.betaIdentity, 'peter-demo');
+    expect(playbackController.segment?.title, 'Demo Song');
+    expect(find.byIcon(Icons.pause), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.pause));
+    await tester.pump();
+
+    expect(playbackController.pauseCount, 1);
+    expect(find.byIcon(Icons.play_arrow), findsWidgets);
   });
 
   testWidgets('record upload displays weak analysis without overclaiming', (
     tester,
   ) async {
+    final playbackController = FakeSegmentPlaybackController();
     await tester.pumpWidget(
       KonoProApp(
         healthCheckClient: (_) async =>
@@ -467,6 +490,7 @@ void main() {
             UploadSessionResult(session: sampleSession, job: sampleJob),
         jobStatusClient: (_, _, _) async => completedJob,
         sessionAnalysisClient: (_, _, _) async => weakAnalysis,
+        segmentPlaybackControllerFactory: () => playbackController,
         jobPollInterval: Duration.zero,
       ),
     );
@@ -563,4 +587,33 @@ void main() {
     expect(find.text('Processing failed'), findsOneWidget);
     expect(find.text('processor failed'), findsOneWidget);
   });
+}
+
+class FakeSegmentPlaybackController implements SegmentPlaybackController {
+  Uri? audioUri;
+  String? betaIdentity;
+  DetectedSongSegment? segment;
+  int pauseCount = 0;
+  int disposeCount = 0;
+
+  @override
+  Future<void> playSegment({
+    required Uri audioUri,
+    required String betaIdentity,
+    required DetectedSongSegment segment,
+  }) async {
+    this.audioUri = audioUri;
+    this.betaIdentity = betaIdentity;
+    this.segment = segment;
+  }
+
+  @override
+  Future<void> pause() async {
+    pauseCount += 1;
+  }
+
+  @override
+  Future<void> dispose() async {
+    disposeCount += 1;
+  }
 }
