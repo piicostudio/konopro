@@ -9,6 +9,8 @@ void main() {
 }
 
 typedef HealthCheckClient = Future<BackendHealth> Function(Uri baseUrl);
+typedef SessionListClient =
+    Future<List<BackendSession>> Function(Uri baseUrl, String betaIdentity);
 
 class BackendHealth {
   const BackendHealth({required this.status, required this.environment});
@@ -24,6 +26,44 @@ class BackendConnectionException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class BackendSession {
+  const BackendSession({
+    required this.id,
+    required this.originalFilename,
+    required this.status,
+    required this.sizeBytes,
+    required this.createdAt,
+    this.durationS,
+    this.processingJobId,
+  });
+
+  final String id;
+  final String originalFilename;
+  final String status;
+  final int sizeBytes;
+  final DateTime createdAt;
+  final double? durationS;
+  final String? processingJobId;
+
+  factory BackendSession.fromJson(Map<String, dynamic> json) {
+    return BackendSession(
+      id: json['id']?.toString() ?? '',
+      originalFilename: json['original_filename']?.toString() ?? 'upload',
+      status: json['status']?.toString() ?? 'unknown',
+      sizeBytes: json['size_bytes'] is num
+          ? (json['size_bytes'] as num).toInt()
+          : 0,
+      durationS: json['duration_s'] is num
+          ? (json['duration_s'] as num).toDouble()
+          : null,
+      processingJobId: json['processing_job_id']?.toString(),
+      createdAt:
+          DateTime.tryParse(json['created_at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+    );
+  }
 }
 
 Future<BackendHealth> defaultBackendHealthCheck(Uri baseUrl) async {
@@ -67,6 +107,51 @@ Future<BackendHealth> defaultBackendHealthCheck(Uri baseUrl) async {
   }
 }
 
+Future<List<BackendSession>> defaultSessionListClient(
+  Uri baseUrl,
+  String betaIdentity,
+) async {
+  final sessionsUri = baseUrl.replace(
+    path: _joinUriPath(baseUrl.path, '/v1/sessions'),
+    queryParameters: null,
+    fragment: null,
+  );
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+  try {
+    final request = await client.getUrl(sessionsUri);
+    request.headers.set('X-Konopro-Beta-User', betaIdentity);
+    final response = await request.close().timeout(const Duration(seconds: 8));
+    final body = await response.transform(utf8.decoder).join();
+
+    if (response.statusCode != HttpStatus.ok) {
+      throw BackendConnectionException(
+        'Backend returned HTTP ${response.statusCode}.',
+      );
+    }
+
+    final decoded = jsonDecode(body);
+    if (decoded is! List) {
+      throw const BackendConnectionException('Backend returned invalid JSON.');
+    }
+
+    return [
+      for (final item in decoded)
+        if (item is Map<String, dynamic>) BackendSession.fromJson(item),
+    ];
+  } on BackendConnectionException {
+    rethrow;
+  } on TimeoutException {
+    throw const BackendConnectionException('Connection timed out.');
+  } on FormatException {
+    throw const BackendConnectionException('Backend returned invalid JSON.');
+  } on SocketException catch (error) {
+    throw BackendConnectionException(error.message);
+  } finally {
+    client.close(force: true);
+  }
+}
+
 String _joinUriPath(String basePath, String childPath) {
   final cleanBase = basePath.endsWith('/')
       ? basePath.substring(0, basePath.length - 1)
@@ -81,9 +166,10 @@ String _joinUriPath(String basePath, String childPath) {
 }
 
 class KonoProApp extends StatelessWidget {
-  const KonoProApp({super.key, this.healthCheckClient});
+  const KonoProApp({super.key, this.healthCheckClient, this.sessionListClient});
 
   final HealthCheckClient? healthCheckClient;
+  final SessionListClient? sessionListClient;
 
   @override
   Widget build(BuildContext context) {
@@ -113,15 +199,21 @@ class KonoProApp extends StatelessWidget {
       ),
       home: KonoProShell(
         healthCheckClient: healthCheckClient ?? defaultBackendHealthCheck,
+        sessionListClient: sessionListClient ?? defaultSessionListClient,
       ),
     );
   }
 }
 
 class KonoProShell extends StatefulWidget {
-  const KonoProShell({required this.healthCheckClient, super.key});
+  const KonoProShell({
+    required this.healthCheckClient,
+    required this.sessionListClient,
+    super.key,
+  });
 
   final HealthCheckClient healthCheckClient;
+  final SessionListClient sessionListClient;
 
   @override
   State<KonoProShell> createState() => _KonoProShellState();
@@ -133,7 +225,10 @@ class _KonoProShellState extends State<KonoProShell> {
   @override
   Widget build(BuildContext context) {
     final pages = [
-      HomeScreen(healthCheckClient: widget.healthCheckClient),
+      HomeScreen(
+        healthCheckClient: widget.healthCheckClient,
+        sessionListClient: widget.sessionListClient,
+      ),
       const RecordFlowScreen(),
       const FeedPlaceholderScreen(),
     ];
@@ -157,10 +252,57 @@ class _KonoProShellState extends State<KonoProShell> {
   }
 }
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({required this.healthCheckClient, super.key});
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({
+    required this.healthCheckClient,
+    required this.sessionListClient,
+    super.key,
+  });
 
   final HealthCheckClient healthCheckClient;
+  final SessionListClient sessionListClient;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  Uri? _backendUrl;
+  String _betaIdentity = 'peter-demo';
+  List<BackendSession>? _sessions;
+  String? _sessionError;
+  bool _isLoadingSessions = false;
+
+  Future<void> _loadSessions(Uri backendUrl, String betaIdentity) async {
+    setState(() {
+      _backendUrl = backendUrl;
+      _betaIdentity = betaIdentity;
+      _isLoadingSessions = true;
+      _sessionError = null;
+    });
+
+    try {
+      final sessions = await widget.sessionListClient(backendUrl, betaIdentity);
+      if (!mounted) return;
+      setState(() => _sessions = sessions);
+    } on BackendConnectionException catch (error) {
+      if (!mounted) return;
+      setState(() => _sessionError = error.message);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _sessionError = error.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingSessions = false);
+      }
+    }
+  }
+
+  Future<void> _refreshSessions() async {
+    final backendUrl = _backendUrl;
+    if (backendUrl == null) return;
+    await _loadSessions(backendUrl, _betaIdentity);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -169,7 +311,17 @@ class HomeScreen extends StatelessWidget {
       children: [
         const HeaderBlock(),
         const SizedBox(height: 18),
-        BackendConnectionCard(healthCheckClient: healthCheckClient),
+        BackendConnectionCard(
+          healthCheckClient: widget.healthCheckClient,
+          onConnected: _loadSessions,
+        ),
+        const SizedBox(height: 16),
+        BackendSessionListCard(
+          sessions: _sessions,
+          isLoading: _isLoadingSessions,
+          errorMessage: _sessionError,
+          onRefresh: _refreshSessions,
+        ),
         const SizedBox(height: 16),
         const StatusGrid(),
         const SizedBox(height: 16),
@@ -193,9 +345,14 @@ class HomeScreen extends StatelessWidget {
 }
 
 class BackendConnectionCard extends StatefulWidget {
-  const BackendConnectionCard({required this.healthCheckClient, super.key});
+  const BackendConnectionCard({
+    required this.healthCheckClient,
+    required this.onConnected,
+    super.key,
+  });
 
   final HealthCheckClient healthCheckClient;
+  final Future<void> Function(Uri backendUrl, String betaIdentity) onConnected;
 
   @override
   State<BackendConnectionCard> createState() => _BackendConnectionCardState();
@@ -219,10 +376,18 @@ class _BackendConnectionCardState extends State<BackendConnectionCard> {
 
   Future<void> _testConnection() async {
     final baseUrl = Uri.tryParse(_backendUrlController.text.trim());
+    final betaIdentity = _identityController.text.trim();
     if (baseUrl == null || !baseUrl.hasScheme || baseUrl.host.isEmpty) {
       setState(() {
         _health = null;
         _errorMessage = 'Enter a full URL like http://127.0.0.1:8000.';
+      });
+      return;
+    }
+    if (betaIdentity.isEmpty) {
+      setState(() {
+        _health = null;
+        _errorMessage = 'Enter a beta identity.';
       });
       return;
     }
@@ -237,6 +402,7 @@ class _BackendConnectionCardState extends State<BackendConnectionCard> {
       final health = await widget.healthCheckClient(baseUrl);
       if (!mounted) return;
       setState(() => _health = health);
+      await widget.onConnected(baseUrl, betaIdentity);
     } on BackendConnectionException catch (error) {
       if (!mounted) return;
       setState(() => _errorMessage = error.message);
@@ -327,6 +493,174 @@ class _BackendConnectionCardState extends State<BackendConnectionCard> {
       ),
     );
   }
+}
+
+class BackendSessionListCard extends StatelessWidget {
+  const BackendSessionListCard({
+    required this.sessions,
+    required this.isLoading,
+    required this.errorMessage,
+    required this.onRefresh,
+    super.key,
+  });
+
+  final List<BackendSession>? sessions;
+  final bool isLoading;
+  final String? errorMessage;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final sessions = this.sessions;
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Recent sessions',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+                ),
+              ),
+              IconButton(
+                onPressed: isLoading ? null : onRefresh,
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh sessions',
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (isLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (errorMessage != null)
+            SessionMessage(
+              icon: Icons.error_outline,
+              title: 'Could not load sessions',
+              detail: errorMessage!,
+            )
+          else if (sessions == null)
+            const SessionMessage(
+              icon: Icons.cloud_queue_outlined,
+              title: 'Connect to your backend',
+              detail: 'Your uploaded karaoke sessions will appear here.',
+            )
+          else if (sessions.isEmpty)
+            const SessionMessage(
+              icon: Icons.library_music_outlined,
+              title: 'No sessions yet',
+              detail:
+                  'Upload or record karaoke audio to start your practice history.',
+            )
+          else
+            for (final session in sessions.take(3))
+              BackendSessionRow(session: session),
+        ],
+      ),
+    );
+  }
+}
+
+class SessionMessage extends StatelessWidget {
+  const SessionMessage({
+    required this.icon,
+    required this.title,
+    required this.detail,
+    super.key,
+  });
+
+  final IconData icon;
+  final String title;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: Colors.white70),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 3),
+                Text(detail, style: const TextStyle(color: Colors.white60)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class BackendSessionRow extends StatelessWidget {
+  const BackendSessionRow({required this.session, super.key});
+
+  final BackendSession session;
+
+  @override
+  Widget build(BuildContext context) {
+    final duration = session.durationS == null
+        ? 'duration unknown'
+        : _formatDuration(session.durationS!);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          const Icon(Icons.audiotrack_outlined),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  session.originalFilename,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                Text(
+                  '$duration • ${_formatBytes(session.sizeBytes)}',
+                  style: const TextStyle(color: Colors.white60),
+                ),
+              ],
+            ),
+          ),
+          Chip(label: Text(session.status)),
+        ],
+      ),
+    );
+  }
+}
+
+String _formatDuration(double seconds) {
+  final totalSeconds = seconds.round();
+  final minutes = totalSeconds ~/ 60;
+  final remainingSeconds = totalSeconds % 60;
+  return '$minutes:${remainingSeconds.toString().padLeft(2, '0')}';
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) {
+    return '$bytes B';
+  }
+  final kib = bytes / 1024;
+  if (kib < 1024) {
+    return '${kib.toStringAsFixed(1)} KB';
+  }
+  return '${(kib / 1024).toStringAsFixed(1)} MB';
 }
 
 class HeaderBlock extends StatelessWidget {
