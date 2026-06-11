@@ -1,0 +1,2 @@
+"""Konopro backend package."""
+

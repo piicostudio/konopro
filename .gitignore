@@ -30,3 +30,9 @@ research/.cache/
 
 # Local Streamlit state.
 .streamlit/
+
+# Local build, planning, and visual brainstorming artifacts.
+.build/
+.planning/
+.superpowers/
+documentation/
