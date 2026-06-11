@@ -29,4 +29,26 @@ void main() {
 
     expect(sessions, isA<List<BackendSession>>());
   });
+
+  test('default upload client creates live backend session and job', () async {
+    const backendUrl = String.fromEnvironment('KONOPRO_LIVE_BACKEND_URL');
+    if (backendUrl.isEmpty) {
+      return;
+    }
+
+    final result = await defaultUploadSessionClient(
+      Uri.parse(backendUrl),
+      'peter-demo',
+      const PickedAudioFile(
+        name: 'flutter-live-upload.wav',
+        bytes: [1, 2, 3, 4, 5],
+        contentType: 'audio/wav',
+      ),
+    );
+
+    expect(result.session.originalFilename, 'flutter-live-upload.wav');
+    expect(result.session.status, 'queued');
+    expect(result.job.sessionId, result.session.id);
+    expect(result.job.status, 'queued');
+  });
 }

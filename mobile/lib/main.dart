@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 void main() {
@@ -11,6 +13,13 @@ void main() {
 typedef HealthCheckClient = Future<BackendHealth> Function(Uri baseUrl);
 typedef SessionListClient =
     Future<List<BackendSession>> Function(Uri baseUrl, String betaIdentity);
+typedef UploadSessionClient =
+    Future<UploadSessionResult> Function(
+      Uri baseUrl,
+      String betaIdentity,
+      PickedAudioFile file,
+    );
+typedef AudioFilePicker = Future<PickedAudioFile?> Function();
 
 class BackendHealth {
   const BackendHealth({required this.status, required this.environment});
@@ -64,6 +73,70 @@ class BackendSession {
           DateTime.fromMillisecondsSinceEpoch(0),
     );
   }
+}
+
+class BackendJob {
+  const BackendJob({
+    required this.id,
+    required this.sessionId,
+    required this.status,
+    required this.jobType,
+  });
+
+  final String id;
+  final String sessionId;
+  final String status;
+  final String jobType;
+
+  factory BackendJob.fromJson(Map<String, dynamic> json) {
+    return BackendJob(
+      id: json['id']?.toString() ?? '',
+      sessionId: json['session_id']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'unknown',
+      jobType: json['job_type']?.toString() ?? 'unknown',
+    );
+  }
+}
+
+class UploadSessionResult {
+  const UploadSessionResult({required this.session, required this.job});
+
+  final BackendSession session;
+  final BackendJob job;
+
+  factory UploadSessionResult.fromJson(Map<String, dynamic> json) {
+    final sessionJson = json['session'];
+    final jobJson = json['job'];
+    if (sessionJson is! Map<String, dynamic> ||
+        jobJson is! Map<String, dynamic>) {
+      throw const BackendConnectionException('Backend returned invalid JSON.');
+    }
+    return UploadSessionResult(
+      session: BackendSession.fromJson(sessionJson),
+      job: BackendJob.fromJson(jobJson),
+    );
+  }
+}
+
+class PickedAudioFile {
+  const PickedAudioFile({
+    required this.name,
+    required this.bytes,
+    required this.contentType,
+  });
+
+  final String name;
+  final List<int> bytes;
+  final String contentType;
+
+  int get sizeBytes => bytes.length;
+}
+
+class MultipartUploadBody {
+  const MultipartUploadBody({required this.contentType, required this.bytes});
+
+  final String contentType;
+  final List<int> bytes;
 }
 
 Future<BackendHealth> defaultBackendHealthCheck(Uri baseUrl) async {
@@ -152,6 +225,110 @@ Future<List<BackendSession>> defaultSessionListClient(
   }
 }
 
+Future<PickedAudioFile?> defaultAudioFilePicker() async {
+  final result = await FilePicker.pickFiles(
+    type: FileType.audio,
+    allowMultiple: false,
+    withData: true,
+  );
+  final file = result?.files.single;
+  final bytes = file?.bytes;
+  if (file == null || bytes == null) {
+    return null;
+  }
+  return PickedAudioFile(
+    name: file.name,
+    bytes: bytes,
+    contentType: _guessAudioContentType(file.name),
+  );
+}
+
+Future<UploadSessionResult> defaultUploadSessionClient(
+  Uri baseUrl,
+  String betaIdentity,
+  PickedAudioFile file,
+) async {
+  final uploadUri = baseUrl.replace(
+    path: _joinUriPath(baseUrl.path, '/v1/sessions'),
+    queryParameters: null,
+    fragment: null,
+  );
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+  final boundary = 'konopro-${DateTime.now().microsecondsSinceEpoch}';
+  final body = buildUploadSessionBody(file: file, boundary: boundary);
+
+  try {
+    final request = await client.postUrl(uploadUri);
+    request.headers.set('X-Konopro-Beta-User', betaIdentity);
+    request.headers.set(HttpHeaders.contentTypeHeader, body.contentType);
+    request.contentLength = body.bytes.length;
+    request.add(body.bytes);
+
+    final response = await request.close().timeout(const Duration(seconds: 30));
+    final responseBody = await response.transform(utf8.decoder).join();
+
+    if (response.statusCode != HttpStatus.created) {
+      throw BackendConnectionException(
+        'Backend returned HTTP ${response.statusCode}.',
+      );
+    }
+
+    final decoded = jsonDecode(responseBody);
+    if (decoded is! Map<String, dynamic>) {
+      throw const BackendConnectionException('Backend returned invalid JSON.');
+    }
+    return UploadSessionResult.fromJson(decoded);
+  } on BackendConnectionException {
+    rethrow;
+  } on TimeoutException {
+    throw const BackendConnectionException('Upload timed out.');
+  } on FormatException {
+    throw const BackendConnectionException('Backend returned invalid JSON.');
+  } on SocketException catch (error) {
+    throw BackendConnectionException(error.message);
+  } finally {
+    client.close(force: true);
+  }
+}
+
+MultipartUploadBody buildUploadSessionBody({
+  required PickedAudioFile file,
+  required String boundary,
+}) {
+  final builder = BytesBuilder(copy: false);
+  void addText(String value) => builder.add(utf8.encode(value));
+
+  addText('--$boundary\r\n');
+  addText('Content-Disposition: form-data; name="source"\r\n\r\n');
+  addText('flutter_app\r\n');
+  addText('--$boundary\r\n');
+  addText(
+    'Content-Disposition: form-data; name="file"; filename="${_escapeMultipartHeader(file.name)}"\r\n',
+  );
+  addText('Content-Type: ${file.contentType}\r\n\r\n');
+  builder.add(file.bytes);
+  addText('\r\n--$boundary--\r\n');
+
+  return MultipartUploadBody(
+    contentType: 'multipart/form-data; boundary=$boundary',
+    bytes: builder.takeBytes(),
+  );
+}
+
+String _escapeMultipartHeader(String value) {
+  return value.replaceAll('"', r'\"');
+}
+
+String _guessAudioContentType(String filename) {
+  final lower = filename.toLowerCase();
+  if (lower.endsWith('.wav')) return 'audio/wav';
+  if (lower.endsWith('.m4a')) return 'audio/mp4';
+  if (lower.endsWith('.aac')) return 'audio/aac';
+  if (lower.endsWith('.ogg')) return 'audio/ogg';
+  if (lower.endsWith('.flac')) return 'audio/flac';
+  return 'audio/mpeg';
+}
+
 String _joinUriPath(String basePath, String childPath) {
   final cleanBase = basePath.endsWith('/')
       ? basePath.substring(0, basePath.length - 1)
@@ -166,10 +343,18 @@ String _joinUriPath(String basePath, String childPath) {
 }
 
 class KonoProApp extends StatelessWidget {
-  const KonoProApp({super.key, this.healthCheckClient, this.sessionListClient});
+  const KonoProApp({
+    super.key,
+    this.healthCheckClient,
+    this.sessionListClient,
+    this.uploadSessionClient,
+    this.audioFilePicker,
+  });
 
   final HealthCheckClient? healthCheckClient;
   final SessionListClient? sessionListClient;
+  final UploadSessionClient? uploadSessionClient;
+  final AudioFilePicker? audioFilePicker;
 
   @override
   Widget build(BuildContext context) {
@@ -200,6 +385,8 @@ class KonoProApp extends StatelessWidget {
       home: KonoProShell(
         healthCheckClient: healthCheckClient ?? defaultBackendHealthCheck,
         sessionListClient: sessionListClient ?? defaultSessionListClient,
+        uploadSessionClient: uploadSessionClient ?? defaultUploadSessionClient,
+        audioFilePicker: audioFilePicker ?? defaultAudioFilePicker,
       ),
     );
   }
@@ -209,11 +396,15 @@ class KonoProShell extends StatefulWidget {
   const KonoProShell({
     required this.healthCheckClient,
     required this.sessionListClient,
+    required this.uploadSessionClient,
+    required this.audioFilePicker,
     super.key,
   });
 
   final HealthCheckClient healthCheckClient;
   final SessionListClient sessionListClient;
+  final UploadSessionClient uploadSessionClient;
+  final AudioFilePicker audioFilePicker;
 
   @override
   State<KonoProShell> createState() => _KonoProShellState();
@@ -221,6 +412,15 @@ class KonoProShell extends StatefulWidget {
 
 class _KonoProShellState extends State<KonoProShell> {
   int _selectedIndex = 0;
+  Uri? _backendUrl;
+  String _betaIdentity = 'peter-demo';
+
+  void _setBackendConnection(Uri backendUrl, String betaIdentity) {
+    setState(() {
+      _backendUrl = backendUrl;
+      _betaIdentity = betaIdentity;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -228,8 +428,16 @@ class _KonoProShellState extends State<KonoProShell> {
       HomeScreen(
         healthCheckClient: widget.healthCheckClient,
         sessionListClient: widget.sessionListClient,
+        initialBackendUrl: _backendUrl,
+        initialBetaIdentity: _betaIdentity,
+        onBackendConnected: _setBackendConnection,
       ),
-      const RecordFlowScreen(),
+      RecordFlowScreen(
+        backendUrl: _backendUrl,
+        betaIdentity: _betaIdentity,
+        uploadSessionClient: widget.uploadSessionClient,
+        audioFilePicker: widget.audioFilePicker,
+      ),
       const FeedPlaceholderScreen(),
     ];
 
@@ -256,11 +464,17 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({
     required this.healthCheckClient,
     required this.sessionListClient,
+    required this.initialBackendUrl,
+    required this.initialBetaIdentity,
+    required this.onBackendConnected,
     super.key,
   });
 
   final HealthCheckClient healthCheckClient;
   final SessionListClient sessionListClient;
+  final Uri? initialBackendUrl;
+  final String initialBetaIdentity;
+  final void Function(Uri backendUrl, String betaIdentity) onBackendConnected;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -268,10 +482,17 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   Uri? _backendUrl;
-  String _betaIdentity = 'peter-demo';
+  late String _betaIdentity;
   List<BackendSession>? _sessions;
   String? _sessionError;
   bool _isLoadingSessions = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _backendUrl = widget.initialBackendUrl;
+    _betaIdentity = widget.initialBetaIdentity;
+  }
 
   Future<void> _loadSessions(Uri backendUrl, String betaIdentity) async {
     setState(() {
@@ -280,6 +501,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _isLoadingSessions = true;
       _sessionError = null;
     });
+    widget.onBackendConnected(backendUrl, betaIdentity);
 
     try {
       final sessions = await widget.sessionListClient(backendUrl, betaIdentity);
@@ -663,6 +885,13 @@ String _formatBytes(int bytes) {
   return '${(kib / 1024).toStringAsFixed(1)} MB';
 }
 
+String _shortId(String id) {
+  if (id.length <= 8) {
+    return id;
+  }
+  return id.substring(0, 8);
+}
+
 class HeaderBlock extends StatelessWidget {
   const HeaderBlock({super.key});
 
@@ -828,7 +1057,18 @@ class SongPracticeCard extends StatelessWidget {
 }
 
 class RecordFlowScreen extends StatefulWidget {
-  const RecordFlowScreen({super.key});
+  const RecordFlowScreen({
+    required this.backendUrl,
+    required this.betaIdentity,
+    required this.uploadSessionClient,
+    required this.audioFilePicker,
+    super.key,
+  });
+
+  final Uri? backendUrl;
+  final String betaIdentity;
+  final UploadSessionClient uploadSessionClient;
+  final AudioFilePicker audioFilePicker;
 
   @override
   State<RecordFlowScreen> createState() => _RecordFlowScreenState();
@@ -836,6 +1076,75 @@ class RecordFlowScreen extends StatefulWidget {
 
 class _RecordFlowScreenState extends State<RecordFlowScreen> {
   bool _isReady = false;
+  PickedAudioFile? _selectedFile;
+  UploadSessionResult? _uploadResult;
+  String? _uploadError;
+  bool _isPicking = false;
+  bool _isUploading = false;
+
+  Future<void> _pickAudioFile() async {
+    setState(() {
+      _isPicking = true;
+      _uploadError = null;
+    });
+
+    try {
+      final file = await widget.audioFilePicker();
+      if (!mounted) return;
+      if (file != null) {
+        setState(() {
+          _selectedFile = file;
+          _uploadResult = null;
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _uploadError = error.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isPicking = false);
+      }
+    }
+  }
+
+  Future<void> _uploadAudioFile() async {
+    final backendUrl = widget.backendUrl;
+    final file = _selectedFile;
+    if (backendUrl == null) {
+      setState(() => _uploadError = 'Connect to your backend from Home first.');
+      return;
+    }
+    if (file == null) {
+      setState(() => _uploadError = 'Choose an audio file first.');
+      return;
+    }
+
+    setState(() {
+      _isUploading = true;
+      _uploadError = null;
+      _uploadResult = null;
+    });
+
+    try {
+      final result = await widget.uploadSessionClient(
+        backendUrl,
+        widget.betaIdentity,
+        file,
+      );
+      if (!mounted) return;
+      setState(() => _uploadResult = result);
+    } on BackendConnectionException catch (error) {
+      if (!mounted) return;
+      setState(() => _uploadError = error.message);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _uploadError = error.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -843,7 +1152,17 @@ class _RecordFlowScreenState extends State<RecordFlowScreen> {
       return RecordHelper(onStart: () => setState(() => _isReady = true));
     }
 
-    return const RecordingScreen();
+    return RecordingScreen(
+      backendUrl: widget.backendUrl,
+      betaIdentity: widget.betaIdentity,
+      selectedFile: _selectedFile,
+      uploadResult: _uploadResult,
+      uploadError: _uploadError,
+      isPicking: _isPicking,
+      isUploading: _isUploading,
+      onPickFile: _pickAudioFile,
+      onUpload: _uploadAudioFile,
+    );
   }
 }
 
@@ -913,13 +1232,47 @@ class RecordHelper extends StatelessWidget {
 }
 
 class RecordingScreen extends StatelessWidget {
-  const RecordingScreen({super.key});
+  const RecordingScreen({
+    required this.backendUrl,
+    required this.betaIdentity,
+    required this.selectedFile,
+    required this.uploadResult,
+    required this.uploadError,
+    required this.isPicking,
+    required this.isUploading,
+    required this.onPickFile,
+    required this.onUpload,
+    super.key,
+  });
+
+  final Uri? backendUrl;
+  final String betaIdentity;
+  final PickedAudioFile? selectedFile;
+  final UploadSessionResult? uploadResult;
+  final String? uploadError;
+  final bool isPicking;
+  final bool isUploading;
+  final VoidCallback onPickFile;
+  final VoidCallback onUpload;
 
   @override
   Widget build(BuildContext context) {
+    final result = uploadResult;
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
       children: [
+        UploadSessionCard(
+          backendUrl: backendUrl,
+          betaIdentity: betaIdentity,
+          selectedFile: selectedFile,
+          uploadResult: result,
+          uploadError: uploadError,
+          isPicking: isPicking,
+          isUploading: isUploading,
+          onPickFile: onPickFile,
+          onUpload: onUpload,
+        ),
+        const SizedBox(height: 16),
         GridView.count(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -935,38 +1288,189 @@ class RecordingScreen extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
-        AppCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Picked up',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 8),
-              const DetectedTrackRow(
-                title: 'Every Moment',
-                time: '00:42 - 04:12',
-                badge: 'live',
-              ),
-              const DetectedTrackRow(
-                title: 'Night Letter',
-                time: '06:10 - 09:51',
-                badge: 'new',
-              ),
-              const DetectedTrackRow(
-                title: 'Only Then',
-                time: '12:16 - 16:44',
-                badge: 'match',
-              ),
-            ],
-          ),
-        ),
+        PickedUpCard(showDemoTracks: result != null),
         const SizedBox(height: 16),
         const WaveformCard(),
       ],
+    );
+  }
+}
+
+class UploadSessionCard extends StatelessWidget {
+  const UploadSessionCard({
+    required this.backendUrl,
+    required this.betaIdentity,
+    required this.selectedFile,
+    required this.uploadResult,
+    required this.uploadError,
+    required this.isPicking,
+    required this.isUploading,
+    required this.onPickFile,
+    required this.onUpload,
+    super.key,
+  });
+
+  final Uri? backendUrl;
+  final String betaIdentity;
+  final PickedAudioFile? selectedFile;
+  final UploadSessionResult? uploadResult;
+  final String? uploadError;
+  final bool isPicking;
+  final bool isUploading;
+  final VoidCallback onPickFile;
+  final VoidCallback onUpload;
+
+  @override
+  Widget build(BuildContext context) {
+    final file = selectedFile;
+    final result = uploadResult;
+    final connected = backendUrl != null;
+    return AppCard(
+      emphasized: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                connected ? Icons.cloud_upload_outlined : Icons.cloud_off,
+                color: connected ? const Color(0xFF6DA7A1) : Colors.white60,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      connected ? 'Upload karaoke audio' : 'Backend required',
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    Text(
+                      connected
+                          ? '${backendUrl!} • $betaIdentity'
+                          : 'Connect from Home before uploading.',
+                      style: const TextStyle(color: Colors.white60),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (file == null)
+            const SessionMessage(
+              icon: Icons.audio_file_outlined,
+              title: 'No audio selected',
+              detail: 'Choose an MP3, M4A, WAV, AAC, OGG, or FLAC file.',
+            )
+          else
+            SessionMessage(
+              icon: Icons.audio_file_outlined,
+              title: file.name,
+              detail: '${_formatBytes(file.sizeBytes)} • ${file.contentType}',
+            ),
+          if (uploadError != null) ...[
+            const SizedBox(height: 8),
+            SessionMessage(
+              icon: Icons.error_outline,
+              title: 'Upload failed',
+              detail: uploadError!,
+            ),
+          ],
+          if (result != null) ...[
+            const SizedBox(height: 8),
+            SessionMessage(
+              icon: Icons.check_circle_outline,
+              title: 'Uploaded',
+              detail:
+                  'Session ${_shortId(result.session.id)} • Job ${_shortId(result.job.id)} is ${result.job.status}.',
+            ),
+          ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: isPicking || isUploading ? null : onPickFile,
+                  icon: isPicking
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.folder_open),
+                  label: Text(isPicking ? 'Choosing' : 'Choose file'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed:
+                      !connected || file == null || isPicking || isUploading
+                      ? null
+                      : onUpload,
+                  icon: isUploading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.upload),
+                  label: Text(isUploading ? 'Uploading' : 'Upload'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class PickedUpCard extends StatelessWidget {
+  const PickedUpCard({required this.showDemoTracks, super.key});
+
+  final bool showDemoTracks;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Picked up',
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 8),
+          if (!showDemoTracks)
+            const SessionMessage(
+              icon: Icons.hourglass_empty,
+              title: 'Waiting for upload',
+              detail: 'Detected songs will appear after processing starts.',
+            )
+          else ...[
+            const DetectedTrackRow(
+              title: 'Every Moment',
+              time: '00:42 - 04:12',
+              badge: 'live',
+            ),
+            const DetectedTrackRow(
+              title: 'Night Letter',
+              time: '06:10 - 09:51',
+              badge: 'new',
+            ),
+            const DetectedTrackRow(
+              title: 'Only Then',
+              time: '12:16 - 16:44',
+              badge: 'match',
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
