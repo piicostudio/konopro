@@ -1,11 +1,89 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 void main() {
   runApp(const KonoProApp());
 }
 
+typedef HealthCheckClient = Future<BackendHealth> Function(Uri baseUrl);
+
+class BackendHealth {
+  const BackendHealth({required this.status, required this.environment});
+
+  final String status;
+  final String environment;
+}
+
+class BackendConnectionException implements Exception {
+  const BackendConnectionException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+Future<BackendHealth> defaultBackendHealthCheck(Uri baseUrl) async {
+  final healthUri = baseUrl.replace(
+    path: _joinUriPath(baseUrl.path, 'health'),
+    queryParameters: null,
+    fragment: null,
+  );
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+  try {
+    final request = await client.getUrl(healthUri);
+    final response = await request.close().timeout(const Duration(seconds: 8));
+    final body = await response.transform(utf8.decoder).join();
+
+    if (response.statusCode != HttpStatus.ok) {
+      throw BackendConnectionException(
+        'Backend returned HTTP ${response.statusCode}.',
+      );
+    }
+
+    final decoded = jsonDecode(body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const BackendConnectionException('Backend returned invalid JSON.');
+    }
+
+    return BackendHealth(
+      status: decoded['status']?.toString() ?? 'unknown',
+      environment: decoded['environment']?.toString() ?? 'unknown',
+    );
+  } on BackendConnectionException {
+    rethrow;
+  } on TimeoutException {
+    throw const BackendConnectionException('Connection timed out.');
+  } on FormatException {
+    throw const BackendConnectionException('Backend returned invalid JSON.');
+  } on SocketException catch (error) {
+    throw BackendConnectionException(error.message);
+  } finally {
+    client.close(force: true);
+  }
+}
+
+String _joinUriPath(String basePath, String childPath) {
+  final cleanBase = basePath.endsWith('/')
+      ? basePath.substring(0, basePath.length - 1)
+      : basePath;
+  final cleanChild = childPath.startsWith('/')
+      ? childPath.substring(1)
+      : childPath;
+  if (cleanBase.isEmpty) {
+    return '/$cleanChild';
+  }
+  return '$cleanBase/$cleanChild';
+}
+
 class KonoProApp extends StatelessWidget {
-  const KonoProApp({super.key});
+  const KonoProApp({super.key, this.healthCheckClient});
+
+  final HealthCheckClient? healthCheckClient;
 
   @override
   Widget build(BuildContext context) {
@@ -33,13 +111,17 @@ class KonoProApp extends StatelessWidget {
           fontFamily: 'Roboto',
         ),
       ),
-      home: const KonoProShell(),
+      home: KonoProShell(
+        healthCheckClient: healthCheckClient ?? defaultBackendHealthCheck,
+      ),
     );
   }
 }
 
 class KonoProShell extends StatefulWidget {
-  const KonoProShell({super.key});
+  const KonoProShell({required this.healthCheckClient, super.key});
+
+  final HealthCheckClient healthCheckClient;
 
   @override
   State<KonoProShell> createState() => _KonoProShellState();
@@ -51,7 +133,7 @@ class _KonoProShellState extends State<KonoProShell> {
   @override
   Widget build(BuildContext context) {
     final pages = [
-      const HomeScreen(),
+      HomeScreen(healthCheckClient: widget.healthCheckClient),
       const RecordFlowScreen(),
       const FeedPlaceholderScreen(),
     ];
@@ -76,7 +158,9 @@ class _KonoProShellState extends State<KonoProShell> {
 }
 
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({required this.healthCheckClient, super.key});
+
+  final HealthCheckClient healthCheckClient;
 
   @override
   Widget build(BuildContext context) {
@@ -85,6 +169,8 @@ class HomeScreen extends StatelessWidget {
       children: [
         const HeaderBlock(),
         const SizedBox(height: 18),
+        BackendConnectionCard(healthCheckClient: healthCheckClient),
+        const SizedBox(height: 16),
         const StatusGrid(),
         const SizedBox(height: 16),
         const LastSessionCard(),
@@ -102,6 +188,143 @@ class HomeScreen extends StatelessWidget {
             child: SongPracticeCard(song: song),
           ),
       ],
+    );
+  }
+}
+
+class BackendConnectionCard extends StatefulWidget {
+  const BackendConnectionCard({required this.healthCheckClient, super.key});
+
+  final HealthCheckClient healthCheckClient;
+
+  @override
+  State<BackendConnectionCard> createState() => _BackendConnectionCardState();
+}
+
+class _BackendConnectionCardState extends State<BackendConnectionCard> {
+  final _backendUrlController = TextEditingController(
+    text: 'http://127.0.0.1:8000',
+  );
+  final _identityController = TextEditingController(text: 'peter-demo');
+  BackendHealth? _health;
+  String? _errorMessage;
+  bool _isChecking = false;
+
+  @override
+  void dispose() {
+    _backendUrlController.dispose();
+    _identityController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _testConnection() async {
+    final baseUrl = Uri.tryParse(_backendUrlController.text.trim());
+    if (baseUrl == null || !baseUrl.hasScheme || baseUrl.host.isEmpty) {
+      setState(() {
+        _health = null;
+        _errorMessage = 'Enter a full URL like http://127.0.0.1:8000.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isChecking = true;
+      _health = null;
+      _errorMessage = null;
+    });
+
+    try {
+      final health = await widget.healthCheckClient(baseUrl);
+      if (!mounted) return;
+      setState(() => _health = health);
+    } on BackendConnectionException catch (error) {
+      if (!mounted) return;
+      setState(() => _errorMessage = error.message);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _errorMessage = error.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isChecking = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final connected = _health != null;
+    final statusText = connected
+        ? 'Connected to ${_health!.environment}'
+        : _errorMessage == null
+        ? 'Not connected'
+        : 'Connection failed';
+    final detailText = connected
+        ? 'Backend status: ${_health!.status}'
+        : _errorMessage ?? 'Test your local backend before uploading audio.';
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                connected
+                    ? Icons.cloud_done_outlined
+                    : Icons.cloud_off_outlined,
+                color: connected
+                    ? const Color(0xFF6DA7A1)
+                    : Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      statusText,
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    Text(
+                      detailText,
+                      style: const TextStyle(color: Colors.white60),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _backendUrlController,
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(
+              labelText: 'Backend URL',
+              prefixIcon: Icon(Icons.link),
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _identityController,
+            decoration: const InputDecoration(
+              labelText: 'Beta identity',
+              prefixIcon: Icon(Icons.person_outline),
+            ),
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: _isChecking ? null : _testConnection,
+            icon: _isChecking
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.sync),
+            label: Text(_isChecking ? 'Checking' : 'Test connection'),
+          ),
+        ],
+      ),
     );
   }
 }
