@@ -20,6 +20,14 @@ typedef UploadSessionClient =
       PickedAudioFile file,
     );
 typedef AudioFilePicker = Future<PickedAudioFile?> Function();
+typedef JobStatusClient =
+    Future<BackendJob> Function(Uri baseUrl, String betaIdentity, String jobId);
+typedef SessionAnalysisClient =
+    Future<SessionAnalysis> Function(
+      Uri baseUrl,
+      String betaIdentity,
+      String sessionId,
+    );
 
 class BackendHealth {
   const BackendHealth({required this.status, required this.environment});
@@ -81,12 +89,14 @@ class BackendJob {
     required this.sessionId,
     required this.status,
     required this.jobType,
+    this.errorMessage,
   });
 
   final String id;
   final String sessionId;
   final String status;
   final String jobType;
+  final String? errorMessage;
 
   factory BackendJob.fromJson(Map<String, dynamic> json) {
     return BackendJob(
@@ -94,6 +104,7 @@ class BackendJob {
       sessionId: json['session_id']?.toString() ?? '',
       status: json['status']?.toString() ?? 'unknown',
       jobType: json['job_type']?.toString() ?? 'unknown',
+      errorMessage: json['error_message']?.toString(),
     );
   }
 }
@@ -137,6 +148,133 @@ class MultipartUploadBody {
 
   final String contentType;
   final List<int> bytes;
+}
+
+class AnalysisSummary {
+  const AnalysisSummary({
+    required this.status,
+    required this.message,
+    required this.confidenceLevel,
+    required this.acceptedIntervalCount,
+    required this.weakCandidateCount,
+  });
+
+  final String status;
+  final String message;
+  final String confidenceLevel;
+  final int acceptedIntervalCount;
+  final int weakCandidateCount;
+
+  factory AnalysisSummary.fromJson(Map<String, dynamic> json) {
+    return AnalysisSummary(
+      status: json['status']?.toString() ?? 'unknown',
+      message: json['message']?.toString() ?? '',
+      confidenceLevel: json['confidence_level']?.toString() ?? 'unknown',
+      acceptedIntervalCount: json['accepted_interval_count'] is num
+          ? (json['accepted_interval_count'] as num).toInt()
+          : 0,
+      weakCandidateCount: json['weak_candidate_count'] is num
+          ? (json['weak_candidate_count'] as num).toInt()
+          : 0,
+    );
+  }
+}
+
+class DetectedSongSegment {
+  const DetectedSongSegment({
+    required this.title,
+    required this.artist,
+    required this.startS,
+    required this.endS,
+    required this.confidenceLabel,
+    required this.confidenceScore,
+    this.reason,
+    this.isWeak = false,
+  });
+
+  final String title;
+  final String artist;
+  final double startS;
+  final double endS;
+  final String confidenceLabel;
+  final double? confidenceScore;
+  final String? reason;
+  final bool isWeak;
+
+  factory DetectedSongSegment.fromIntervalJson(Map<String, dynamic> json) {
+    return DetectedSongSegment(
+      title: json['song']?.toString() ?? 'Unknown song',
+      artist: json['artist']?.toString() ?? '',
+      startS: json['start_s'] is num ? (json['start_s'] as num).toDouble() : 0,
+      endS: json['end_s'] is num ? (json['end_s'] as num).toDouble() : 0,
+      confidenceLabel: json['confidence_level']?.toString() ?? 'unknown',
+      confidenceScore: json['confidence_score'] is num
+          ? (json['confidence_score'] as num).toDouble()
+          : null,
+    );
+  }
+
+  factory DetectedSongSegment.fromWeakCandidateJson(Map<String, dynamic> json) {
+    return DetectedSongSegment(
+      title: json['song']?.toString() ?? 'Unknown clue',
+      artist: json['artist']?.toString() ?? '',
+      startS: json['start_s'] is num ? (json['start_s'] as num).toDouble() : 0,
+      endS: json['end_s'] is num ? (json['end_s'] as num).toDouble() : 0,
+      confidenceLabel: 'weak',
+      confidenceScore: json['provider_confidence'] is num
+          ? (json['provider_confidence'] as num).toDouble()
+          : null,
+      reason: json['reason']?.toString(),
+      isWeak: true,
+    );
+  }
+}
+
+class SessionAnalysis {
+  const SessionAnalysis({
+    required this.status,
+    required this.provider,
+    required this.summary,
+    required this.intervals,
+    required this.weakCandidates,
+  });
+
+  final String status;
+  final String provider;
+  final AnalysisSummary summary;
+  final List<DetectedSongSegment> intervals;
+  final List<DetectedSongSegment> weakCandidates;
+
+  factory SessionAnalysis.fromJson(Map<String, dynamic> json) {
+    final summaryJson = json['result_summary'];
+    return SessionAnalysis(
+      status: json['status']?.toString() ?? 'unknown',
+      provider: json['provider']?.toString() ?? 'unknown',
+      summary: summaryJson is Map<String, dynamic>
+          ? AnalysisSummary.fromJson(summaryJson)
+          : const AnalysisSummary(
+              status: 'unknown',
+              message: '',
+              confidenceLevel: 'unknown',
+              acceptedIntervalCount: 0,
+              weakCandidateCount: 0,
+            ),
+      intervals: [
+        for (final item
+            in json['intervals'] is List ? json['intervals'] as List : const [])
+          if (item is Map<String, dynamic>)
+            DetectedSongSegment.fromIntervalJson(item),
+      ],
+      weakCandidates: [
+        for (final item
+            in json['weak_candidates'] is List
+                ? json['weak_candidates'] as List
+                : const [])
+          if (item is Map<String, dynamic>)
+            DetectedSongSegment.fromWeakCandidateJson(item),
+      ],
+    );
+  }
 }
 
 Future<BackendHealth> defaultBackendHealthCheck(Uri baseUrl) async {
@@ -291,6 +429,92 @@ Future<UploadSessionResult> defaultUploadSessionClient(
   }
 }
 
+Future<BackendJob> defaultJobStatusClient(
+  Uri baseUrl,
+  String betaIdentity,
+  String jobId,
+) async {
+  final jobUri = baseUrl.replace(
+    path: _joinUriPath(baseUrl.path, '/v1/jobs/$jobId'),
+    queryParameters: null,
+    fragment: null,
+  );
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+  try {
+    final request = await client.getUrl(jobUri);
+    request.headers.set('X-Konopro-Beta-User', betaIdentity);
+    final response = await request.close().timeout(const Duration(seconds: 8));
+    final body = await response.transform(utf8.decoder).join();
+
+    if (response.statusCode != HttpStatus.ok) {
+      throw BackendConnectionException(
+        'Backend returned HTTP ${response.statusCode}.',
+      );
+    }
+
+    final decoded = jsonDecode(body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const BackendConnectionException('Backend returned invalid JSON.');
+    }
+    return BackendJob.fromJson(decoded);
+  } on BackendConnectionException {
+    rethrow;
+  } on TimeoutException {
+    throw const BackendConnectionException('Connection timed out.');
+  } on FormatException {
+    throw const BackendConnectionException('Backend returned invalid JSON.');
+  } on SocketException catch (error) {
+    throw BackendConnectionException(error.message);
+  } finally {
+    client.close(force: true);
+  }
+}
+
+Future<SessionAnalysis> defaultSessionAnalysisClient(
+  Uri baseUrl,
+  String betaIdentity,
+  String sessionId,
+) async {
+  final analysisUri = baseUrl.replace(
+    path: _joinUriPath(baseUrl.path, '/v1/sessions/$sessionId/analysis'),
+    queryParameters: null,
+    fragment: null,
+  );
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+  try {
+    final request = await client.getUrl(analysisUri);
+    request.headers.set('X-Konopro-Beta-User', betaIdentity);
+    final response = await request.close().timeout(const Duration(seconds: 8));
+    final body = await response.transform(utf8.decoder).join();
+
+    if (response.statusCode != HttpStatus.ok) {
+      throw BackendConnectionException(
+        response.statusCode == HttpStatus.notFound
+            ? 'Analysis not ready.'
+            : 'Backend returned HTTP ${response.statusCode}.',
+      );
+    }
+
+    final decoded = jsonDecode(body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const BackendConnectionException('Backend returned invalid JSON.');
+    }
+    return SessionAnalysis.fromJson(decoded);
+  } on BackendConnectionException {
+    rethrow;
+  } on TimeoutException {
+    throw const BackendConnectionException('Connection timed out.');
+  } on FormatException {
+    throw const BackendConnectionException('Backend returned invalid JSON.');
+  } on SocketException catch (error) {
+    throw BackendConnectionException(error.message);
+  } finally {
+    client.close(force: true);
+  }
+}
+
 MultipartUploadBody buildUploadSessionBody({
   required PickedAudioFile file,
   required String boundary,
@@ -349,12 +573,18 @@ class KonoProApp extends StatelessWidget {
     this.sessionListClient,
     this.uploadSessionClient,
     this.audioFilePicker,
+    this.jobStatusClient,
+    this.sessionAnalysisClient,
+    this.jobPollInterval = const Duration(seconds: 2),
   });
 
   final HealthCheckClient? healthCheckClient;
   final SessionListClient? sessionListClient;
   final UploadSessionClient? uploadSessionClient;
   final AudioFilePicker? audioFilePicker;
+  final JobStatusClient? jobStatusClient;
+  final SessionAnalysisClient? sessionAnalysisClient;
+  final Duration jobPollInterval;
 
   @override
   Widget build(BuildContext context) {
@@ -387,6 +617,10 @@ class KonoProApp extends StatelessWidget {
         sessionListClient: sessionListClient ?? defaultSessionListClient,
         uploadSessionClient: uploadSessionClient ?? defaultUploadSessionClient,
         audioFilePicker: audioFilePicker ?? defaultAudioFilePicker,
+        jobStatusClient: jobStatusClient ?? defaultJobStatusClient,
+        sessionAnalysisClient:
+            sessionAnalysisClient ?? defaultSessionAnalysisClient,
+        jobPollInterval: jobPollInterval,
       ),
     );
   }
@@ -398,6 +632,9 @@ class KonoProShell extends StatefulWidget {
     required this.sessionListClient,
     required this.uploadSessionClient,
     required this.audioFilePicker,
+    required this.jobStatusClient,
+    required this.sessionAnalysisClient,
+    required this.jobPollInterval,
     super.key,
   });
 
@@ -405,6 +642,9 @@ class KonoProShell extends StatefulWidget {
   final SessionListClient sessionListClient;
   final UploadSessionClient uploadSessionClient;
   final AudioFilePicker audioFilePicker;
+  final JobStatusClient jobStatusClient;
+  final SessionAnalysisClient sessionAnalysisClient;
+  final Duration jobPollInterval;
 
   @override
   State<KonoProShell> createState() => _KonoProShellState();
@@ -437,6 +677,9 @@ class _KonoProShellState extends State<KonoProShell> {
         betaIdentity: _betaIdentity,
         uploadSessionClient: widget.uploadSessionClient,
         audioFilePicker: widget.audioFilePicker,
+        jobStatusClient: widget.jobStatusClient,
+        sessionAnalysisClient: widget.sessionAnalysisClient,
+        jobPollInterval: widget.jobPollInterval,
       ),
       const FeedPlaceholderScreen(),
     ];
@@ -1062,6 +1305,9 @@ class RecordFlowScreen extends StatefulWidget {
     required this.betaIdentity,
     required this.uploadSessionClient,
     required this.audioFilePicker,
+    required this.jobStatusClient,
+    required this.sessionAnalysisClient,
+    required this.jobPollInterval,
     super.key,
   });
 
@@ -1069,6 +1315,9 @@ class RecordFlowScreen extends StatefulWidget {
   final String betaIdentity;
   final UploadSessionClient uploadSessionClient;
   final AudioFilePicker audioFilePicker;
+  final JobStatusClient jobStatusClient;
+  final SessionAnalysisClient sessionAnalysisClient;
+  final Duration jobPollInterval;
 
   @override
   State<RecordFlowScreen> createState() => _RecordFlowScreenState();
@@ -1078,9 +1327,13 @@ class _RecordFlowScreenState extends State<RecordFlowScreen> {
   bool _isReady = false;
   PickedAudioFile? _selectedFile;
   UploadSessionResult? _uploadResult;
+  BackendJob? _currentJob;
+  SessionAnalysis? _analysis;
   String? _uploadError;
+  String? _analysisError;
   bool _isPicking = false;
   bool _isUploading = false;
+  bool _isPollingJob = false;
 
   Future<void> _pickAudioFile() async {
     setState(() {
@@ -1095,6 +1348,9 @@ class _RecordFlowScreenState extends State<RecordFlowScreen> {
         setState(() {
           _selectedFile = file;
           _uploadResult = null;
+          _currentJob = null;
+          _analysis = null;
+          _analysisError = null;
         });
       }
     } catch (error) {
@@ -1122,7 +1378,10 @@ class _RecordFlowScreenState extends State<RecordFlowScreen> {
     setState(() {
       _isUploading = true;
       _uploadError = null;
+      _analysisError = null;
       _uploadResult = null;
+      _currentJob = null;
+      _analysis = null;
     });
 
     try {
@@ -1132,7 +1391,11 @@ class _RecordFlowScreenState extends State<RecordFlowScreen> {
         file,
       );
       if (!mounted) return;
-      setState(() => _uploadResult = result);
+      setState(() {
+        _uploadResult = result;
+        _currentJob = result.job;
+      });
+      unawaited(_pollJobAndAnalysis(backendUrl, widget.betaIdentity, result));
     } on BackendConnectionException catch (error) {
       if (!mounted) return;
       setState(() => _uploadError = error.message);
@@ -1142,6 +1405,65 @@ class _RecordFlowScreenState extends State<RecordFlowScreen> {
     } finally {
       if (mounted) {
         setState(() => _isUploading = false);
+      }
+    }
+  }
+
+  Future<void> _pollJobAndAnalysis(
+    Uri backendUrl,
+    String betaIdentity,
+    UploadSessionResult uploadResult,
+  ) async {
+    setState(() {
+      _isPollingJob = true;
+      _analysisError = null;
+    });
+
+    BackendJob latestJob = uploadResult.job;
+    try {
+      for (var attempt = 0; attempt < 12; attempt += 1) {
+        latestJob = await widget.jobStatusClient(
+          backendUrl,
+          betaIdentity,
+          uploadResult.job.id,
+        );
+        if (!mounted) return;
+        setState(() => _currentJob = latestJob);
+
+        if (_isTerminalJobStatus(latestJob.status)) {
+          break;
+        }
+        await Future<void>.delayed(widget.jobPollInterval);
+      }
+
+      if (!mounted) return;
+      if (latestJob.status == 'completed') {
+        final analysis = await widget.sessionAnalysisClient(
+          backendUrl,
+          betaIdentity,
+          uploadResult.session.id,
+        );
+        if (!mounted) return;
+        setState(() => _analysis = analysis);
+      } else if (latestJob.status == 'failed') {
+        setState(() {
+          final errorMessage = latestJob.errorMessage;
+          _analysisError = errorMessage == null || errorMessage.isEmpty
+              ? 'Processing failed on the backend.'
+              : errorMessage;
+        });
+      } else if (latestJob.status == 'cancelled') {
+        setState(() => _analysisError = 'Processing was cancelled.');
+      }
+    } on BackendConnectionException catch (error) {
+      if (!mounted) return;
+      setState(() => _analysisError = error.message);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _analysisError = error.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isPollingJob = false);
       }
     }
   }
@@ -1157,9 +1479,13 @@ class _RecordFlowScreenState extends State<RecordFlowScreen> {
       betaIdentity: widget.betaIdentity,
       selectedFile: _selectedFile,
       uploadResult: _uploadResult,
+      currentJob: _currentJob,
+      analysis: _analysis,
       uploadError: _uploadError,
+      analysisError: _analysisError,
       isPicking: _isPicking,
       isUploading: _isUploading,
+      isPollingJob: _isPollingJob,
       onPickFile: _pickAudioFile,
       onUpload: _uploadAudioFile,
     );
@@ -1237,9 +1563,13 @@ class RecordingScreen extends StatelessWidget {
     required this.betaIdentity,
     required this.selectedFile,
     required this.uploadResult,
+    required this.currentJob,
+    required this.analysis,
     required this.uploadError,
+    required this.analysisError,
     required this.isPicking,
     required this.isUploading,
+    required this.isPollingJob,
     required this.onPickFile,
     required this.onUpload,
     super.key,
@@ -1249,9 +1579,13 @@ class RecordingScreen extends StatelessWidget {
   final String betaIdentity;
   final PickedAudioFile? selectedFile;
   final UploadSessionResult? uploadResult;
+  final BackendJob? currentJob;
+  final SessionAnalysis? analysis;
   final String? uploadError;
+  final String? analysisError;
   final bool isPicking;
   final bool isUploading;
+  final bool isPollingJob;
   final VoidCallback onPickFile;
   final VoidCallback onUpload;
 
@@ -1266,6 +1600,7 @@ class RecordingScreen extends StatelessWidget {
           betaIdentity: betaIdentity,
           selectedFile: selectedFile,
           uploadResult: result,
+          currentJob: currentJob,
           uploadError: uploadError,
           isPicking: isPicking,
           isUploading: isUploading,
@@ -1288,7 +1623,13 @@ class RecordingScreen extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
-        PickedUpCard(showDemoTracks: result != null),
+        PickedUpCard(
+          uploadResult: result,
+          currentJob: currentJob,
+          analysis: analysis,
+          analysisError: analysisError,
+          isPollingJob: isPollingJob,
+        ),
         const SizedBox(height: 16),
         const WaveformCard(),
       ],
@@ -1302,6 +1643,7 @@ class UploadSessionCard extends StatelessWidget {
     required this.betaIdentity,
     required this.selectedFile,
     required this.uploadResult,
+    required this.currentJob,
     required this.uploadError,
     required this.isPicking,
     required this.isUploading,
@@ -1314,6 +1656,7 @@ class UploadSessionCard extends StatelessWidget {
   final String betaIdentity;
   final PickedAudioFile? selectedFile;
   final UploadSessionResult? uploadResult;
+  final BackendJob? currentJob;
   final String? uploadError;
   final bool isPicking;
   final bool isUploading;
@@ -1324,6 +1667,7 @@ class UploadSessionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final file = selectedFile;
     final result = uploadResult;
+    final job = currentJob ?? result?.job;
     final connected = backendUrl != null;
     return AppCard(
       emphasized: true,
@@ -1384,7 +1728,7 @@ class UploadSessionCard extends StatelessWidget {
               icon: Icons.check_circle_outline,
               title: 'Uploaded',
               detail:
-                  'Session ${_shortId(result.session.id)} • Job ${_shortId(result.job.id)} is ${result.job.status}.',
+                  'Session ${_shortId(result.session.id)} • Job ${_shortId(result.job.id)} is ${job?.status ?? result.job.status}.',
             ),
           ],
           const SizedBox(height: 12),
@@ -1429,12 +1773,25 @@ class UploadSessionCard extends StatelessWidget {
 }
 
 class PickedUpCard extends StatelessWidget {
-  const PickedUpCard({required this.showDemoTracks, super.key});
+  const PickedUpCard({
+    required this.uploadResult,
+    required this.currentJob,
+    required this.analysis,
+    required this.analysisError,
+    required this.isPollingJob,
+    super.key,
+  });
 
-  final bool showDemoTracks;
+  final UploadSessionResult? uploadResult;
+  final BackendJob? currentJob;
+  final SessionAnalysis? analysis;
+  final String? analysisError;
+  final bool isPollingJob;
 
   @override
   Widget build(BuildContext context) {
+    final job = currentJob ?? uploadResult?.job;
+    final analysis = this.analysis;
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1446,31 +1803,99 @@ class PickedUpCard extends StatelessWidget {
             ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 8),
-          if (!showDemoTracks)
+          if (uploadResult == null)
             const SessionMessage(
               icon: Icons.hourglass_empty,
               title: 'Waiting for upload',
               detail: 'Detected songs will appear after processing starts.',
             )
-          else ...[
-            const DetectedTrackRow(
-              title: 'Every Moment',
-              time: '00:42 - 04:12',
-              badge: 'live',
-            ),
-            const DetectedTrackRow(
-              title: 'Night Letter',
-              time: '06:10 - 09:51',
-              badge: 'new',
-            ),
-            const DetectedTrackRow(
-              title: 'Only Then',
-              time: '12:16 - 16:44',
-              badge: 'match',
-            ),
-          ],
+          else if (analysisError != null)
+            SessionMessage(
+              icon: Icons.error_outline,
+              title: job?.status == 'failed'
+                  ? 'Processing failed'
+                  : 'Analysis unavailable',
+              detail: analysisError!,
+            )
+          else if (analysis != null)
+            AnalysisResults(analysis: analysis)
+          else
+            ProcessingStatusMessage(job: job, isPollingJob: isPollingJob),
         ],
       ),
+    );
+  }
+}
+
+class ProcessingStatusMessage extends StatelessWidget {
+  const ProcessingStatusMessage({
+    required this.job,
+    required this.isPollingJob,
+    super.key,
+  });
+
+  final BackendJob? job;
+  final bool isPollingJob;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = job?.status ?? 'queued';
+    return SessionMessage(
+      icon: isPollingJob ? Icons.sync : Icons.hourglass_empty,
+      title: _isTerminalJobStatus(status)
+          ? 'Processing finished'
+          : 'Processing',
+      detail:
+          'Job ${job == null ? 'pending' : _shortId(job!.id)} is $status. Results will appear here.',
+    );
+  }
+}
+
+class AnalysisResults extends StatelessWidget {
+  const AnalysisResults({required this.analysis, super.key});
+
+  final SessionAnalysis analysis;
+
+  @override
+  Widget build(BuildContext context) {
+    final summary = analysis.summary;
+    final segments = analysis.intervals.isNotEmpty
+        ? analysis.intervals
+        : analysis.weakCandidates;
+    final weak =
+        analysis.intervals.isEmpty && analysis.weakCandidates.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SessionMessage(
+          icon: weak
+              ? Icons.warning_amber_outlined
+              : Icons.check_circle_outline,
+          title: _analysisTitle(summary),
+          detail: summary.message.isEmpty
+              ? 'Provider: ${analysis.provider}'
+              : summary.message,
+        ),
+        if (segments.isEmpty)
+          const SessionMessage(
+            icon: Icons.search_off,
+            title: 'No reliable match',
+            detail:
+                'The worker finished, but no song segment passed detection.',
+          )
+        else
+          for (final segment in segments)
+            DetectedTrackRow(
+              title: segment.artist.isEmpty
+                  ? segment.title
+                  : '${segment.title} - ${segment.artist}',
+              time:
+                  '${_formatDuration(segment.startS)} - ${_formatDuration(segment.endS)}',
+              badge: segment.isWeak ? 'weak' : segment.confidenceLabel,
+              subtitle: _segmentSubtitle(segment),
+            ),
+      ],
     );
   }
 }
@@ -1525,12 +1950,14 @@ class DetectedTrackRow extends StatelessWidget {
     required this.title,
     required this.time,
     required this.badge,
+    this.subtitle,
     super.key,
   });
 
   final String title;
   final String time;
   final String badge;
+  final String? subtitle;
 
   @override
   Widget build(BuildContext context) {
@@ -1547,6 +1974,11 @@ class DetectedTrackRow extends StatelessWidget {
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
                 Text(time, style: const TextStyle(color: Colors.white60)),
+                if (subtitle != null)
+                  Text(
+                    subtitle!,
+                    style: const TextStyle(color: Colors.white54),
+                  ),
               ],
             ),
           ),
@@ -1555,6 +1987,31 @@ class DetectedTrackRow extends StatelessWidget {
       ),
     );
   }
+}
+
+bool _isTerminalJobStatus(String status) {
+  return status == 'completed' || status == 'failed' || status == 'cancelled';
+}
+
+String _analysisTitle(AnalysisSummary summary) {
+  if (summary.acceptedIntervalCount > 0) {
+    return '${summary.acceptedIntervalCount} detected song segment${summary.acceptedIntervalCount == 1 ? '' : 's'}';
+  }
+  if (summary.weakCandidateCount > 0) {
+    return '${summary.weakCandidateCount} weak clue${summary.weakCandidateCount == 1 ? '' : 's'} found';
+  }
+  return 'No detected songs';
+}
+
+String _segmentSubtitle(DetectedSongSegment segment) {
+  final details = <String>[];
+  if (segment.confidenceScore != null) {
+    details.add('confidence ${segment.confidenceScore!.toStringAsFixed(1)}');
+  }
+  if (segment.reason != null && segment.reason!.isNotEmpty) {
+    details.add(segment.reason!);
+  }
+  return details.join(' • ');
 }
 
 class WaveformCard extends StatelessWidget {

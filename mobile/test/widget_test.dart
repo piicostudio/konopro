@@ -18,10 +18,69 @@ void main() {
     status: 'queued',
     jobType: 'fingerprint_segmentation',
   );
+  const completedJob = BackendJob(
+    id: 'job-123456789',
+    sessionId: 'session-1',
+    status: 'completed',
+    jobType: 'fingerprint_segmentation',
+  );
+  const failedJob = BackendJob(
+    id: 'job-123456789',
+    sessionId: 'session-1',
+    status: 'failed',
+    jobType: 'fingerprint_segmentation',
+    errorMessage: 'processor failed',
+  );
   const sampleFile = PickedAudioFile(
     name: 'karaoke.wav',
     bytes: [1, 2, 3, 4],
     contentType: 'audio/wav',
+  );
+  const sampleAnalysis = SessionAnalysis(
+    status: 'completed',
+    provider: 'fake',
+    summary: AnalysisSummary(
+      status: 'accepted_intervals',
+      message: 'Likely song intervals were found.',
+      confidenceLevel: 'high',
+      acceptedIntervalCount: 1,
+      weakCandidateCount: 0,
+    ),
+    intervals: [
+      DetectedSongSegment(
+        title: 'Demo Song',
+        artist: 'Demo Artist',
+        startS: 42,
+        endS: 252,
+        confidenceLabel: 'high',
+        confidenceScore: 91.2,
+      ),
+    ],
+    weakCandidates: [],
+  );
+  const weakAnalysis = SessionAnalysis(
+    status: 'completed',
+    provider: 'fake',
+    summary: AnalysisSummary(
+      status: 'weak_candidates',
+      message: 'Only weak song clues were found.',
+      confidenceLevel: 'weak_clues',
+      acceptedIntervalCount: 0,
+      weakCandidateCount: 1,
+    ),
+    intervals: [],
+    weakCandidates: [
+      DetectedSongSegment(
+        title: 'Maybe Song',
+        artist: 'Maybe Artist',
+        startS: 0,
+        endS: 10,
+        confidenceLabel: 'weak',
+        confidenceScore: 0.4,
+        reason: 'singleton_match',
+        isWeak: true,
+      ),
+    ],
   );
 
   test('BackendSession decodes backend session JSON', () {
@@ -68,6 +127,61 @@ void main() {
     expect(result.job.id, 'job-1');
     expect(result.job.sessionId, 'session-1');
     expect(result.job.jobType, 'fingerprint_segmentation');
+  });
+
+  test('BackendJob decodes backend job JSON with failure message', () {
+    final job = BackendJob.fromJson({
+      'id': 'job-1',
+      'session_id': 'session-1',
+      'status': 'failed',
+      'job_type': 'fingerprint_segmentation',
+      'error_message': 'bad audio',
+    });
+
+    expect(job.id, 'job-1');
+    expect(job.sessionId, 'session-1');
+    expect(job.status, 'failed');
+    expect(job.errorMessage, 'bad audio');
+  });
+
+  test('SessionAnalysis decodes intervals and weak candidates', () {
+    final analysis = SessionAnalysis.fromJson({
+      'status': 'completed',
+      'provider': 'fake',
+      'result_summary': {
+        'status': 'weak_candidates',
+        'message': 'Only weak clues.',
+        'confidence_level': 'weak_clues',
+        'accepted_interval_count': 0,
+        'weak_candidate_count': 1,
+      },
+      'intervals': [
+        {
+          'song': 'Demo Song',
+          'artist': 'Demo Artist',
+          'start_s': 42.0,
+          'end_s': 252.0,
+          'confidence_level': 'high',
+          'confidence_score': 91.2,
+        },
+      ],
+      'weak_candidates': [
+        {
+          'song': 'Maybe Song',
+          'artist': 'Maybe Artist',
+          'start_s': 0.0,
+          'end_s': 10.0,
+          'provider_confidence': 0.4,
+          'reason': 'singleton_match',
+        },
+      ],
+    });
+
+    expect(analysis.summary.status, 'weak_candidates');
+    expect(analysis.intervals.single.title, 'Demo Song');
+    expect(analysis.intervals.single.confidenceScore, 91.2);
+    expect(analysis.weakCandidates.single.isWeak, isTrue);
+    expect(analysis.weakCandidates.single.reason, 'singleton_match');
   });
 
   test('multipart upload body includes file and source parts', () {
@@ -250,12 +364,15 @@ void main() {
             const BackendHealth(status: 'ok', environment: 'local'),
         sessionListClient: (_, _) async => [],
         audioFilePicker: () async => sampleFile,
+        jobPollInterval: Duration.zero,
         uploadSessionClient: (baseUrl, betaIdentity, file) async {
           uploadedBaseUrl = baseUrl;
           uploadedIdentity = betaIdentity;
           uploadedFile = file;
           return UploadSessionResult(session: sampleSession, job: sampleJob);
         },
+        jobStatusClient: (_, _, _) async => completedJob,
+        sessionAnalysisClient: (_, _, _) async => sampleAnalysis,
       ),
     );
 
@@ -281,6 +398,100 @@ void main() {
     expect(uploadedFile, sampleFile);
     expect(find.text('Uploaded'), findsOneWidget);
     expect(find.textContaining('Job job-1234'), findsOneWidget);
+  });
+
+  testWidgets('record upload polls job and displays accepted analysis', (
+    tester,
+  ) async {
+    final statuses = [
+      sampleJob,
+      const BackendJob(
+        id: 'job-123456789',
+        sessionId: 'session-1',
+        status: 'processing',
+        jobType: 'fingerprint_segmentation',
+      ),
+      completedJob,
+    ];
+    var statusIndex = 0;
+
+    await tester.pumpWidget(
+      KonoProApp(
+        healthCheckClient: (_) async =>
+            const BackendHealth(status: 'ok', environment: 'local'),
+        sessionListClient: (_, _) async => [],
+        audioFilePicker: () async => sampleFile,
+        uploadSessionClient: (_, _, _) async =>
+            UploadSessionResult(session: sampleSession, job: sampleJob),
+        jobStatusClient: (_, _, _) async =>
+            statuses[statusIndex++ % statuses.length],
+        sessionAnalysisClient: (_, _, _) async => sampleAnalysis,
+        jobPollInterval: Duration.zero,
+      ),
+    );
+
+    await tester.tap(find.text('Test connection'));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.text('Record'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK, start recording'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose file'));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.text('Upload'));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('1 detected song segment'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('1 detected song segment'), findsOneWidget);
+    expect(find.text('Demo Song - Demo Artist'), findsOneWidget);
+    expect(find.text('0:42 - 4:12'), findsOneWidget);
+    expect(find.text('high'), findsOneWidget);
+  });
+
+  testWidgets('record upload displays weak analysis without overclaiming', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      KonoProApp(
+        healthCheckClient: (_) async =>
+            const BackendHealth(status: 'ok', environment: 'local'),
+        sessionListClient: (_, _) async => [],
+        audioFilePicker: () async => sampleFile,
+        uploadSessionClient: (_, _, _) async =>
+            UploadSessionResult(session: sampleSession, job: sampleJob),
+        jobStatusClient: (_, _, _) async => completedJob,
+        sessionAnalysisClient: (_, _, _) async => weakAnalysis,
+        jobPollInterval: Duration.zero,
+      ),
+    );
+
+    await tester.tap(find.text('Test connection'));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.text('Record'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK, start recording'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose file'));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.text('Upload'));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('1 weak clue found'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('1 weak clue found'), findsOneWidget);
+    expect(find.text('Maybe Song - Maybe Artist'), findsOneWidget);
+    expect(find.text('weak'), findsOneWidget);
   });
 
   testWidgets('record upload shows failure state', (tester) async {
@@ -312,5 +523,44 @@ void main() {
 
     expect(find.text('Upload failed'), findsOneWidget);
     expect(find.text('upload failed'), findsOneWidget);
+  });
+
+  testWidgets('record upload shows processing failure from job polling', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      KonoProApp(
+        healthCheckClient: (_) async =>
+            const BackendHealth(status: 'ok', environment: 'local'),
+        sessionListClient: (_, _) async => [],
+        audioFilePicker: () async => sampleFile,
+        uploadSessionClient: (_, _, _) async =>
+            UploadSessionResult(session: sampleSession, job: sampleJob),
+        jobStatusClient: (_, _, _) async => failedJob,
+        sessionAnalysisClient: (_, _, _) async => sampleAnalysis,
+        jobPollInterval: Duration.zero,
+      ),
+    );
+
+    await tester.tap(find.text('Test connection'));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.text('Record'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK, start recording'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose file'));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.text('Upload'));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Processing failed'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Processing failed'), findsOneWidget);
+    expect(find.text('processor failed'), findsOneWidget);
   });
 }

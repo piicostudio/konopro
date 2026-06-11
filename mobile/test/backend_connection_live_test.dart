@@ -51,4 +51,29 @@ void main() {
     expect(result.job.sessionId, result.session.id);
     expect(result.job.status, 'queued');
   });
+
+  test('default job client reaches configured live backend', () async {
+    const backendUrl = String.fromEnvironment('KONOPRO_LIVE_BACKEND_URL');
+    if (backendUrl.isEmpty) {
+      return;
+    }
+
+    final upload = await defaultUploadSessionClient(
+      Uri.parse(backendUrl),
+      'peter-demo',
+      const PickedAudioFile(
+        name: 'flutter-live-job.wav',
+        bytes: [1, 2, 3, 4, 5],
+        contentType: 'audio/wav',
+      ),
+    );
+    final job = await defaultJobStatusClient(
+      Uri.parse(backendUrl),
+      'peter-demo',
+      upload.job.id,
+    );
+
+    expect(job.id, upload.job.id);
+    expect(job.sessionId, upload.session.id);
+  });
 }
