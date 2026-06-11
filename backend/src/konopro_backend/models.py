@@ -211,6 +211,19 @@ class FingerprintDiagnosticRecord(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class SessionFeedback(SQLModel, table=True):
+    __tablename__ = "session_feedback"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    user_id: str = Field(foreign_key="beta_users.id", index=True)
+    session_id: str = Field(foreign_key="audio_sessions.id", index=True)
+    helped_review: str = Field(index=True)
+    rating: int = Field(index=True)
+    answer_text: str | None = None
+    context: str = Field(default="post_analysis", index=True)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class ReportRequest(SQLModel, table=True):
     __tablename__ = "report_requests"
 

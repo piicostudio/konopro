@@ -100,6 +100,50 @@ def test_download_session_audio_is_owner_scoped(tmp_path):
     assert cross_user_response.status_code == 404
 
 
+def test_submit_session_feedback_is_owner_scoped_and_recoverable(tmp_path):
+    client = _client(tmp_path)
+    upload = _upload(client).json()
+    session_id = upload["session"]["id"]
+
+    response = client.post(
+        f"/v1/sessions/{session_id}/feedback",
+        headers=_headers(),
+        json={
+            "helped_review": "yes",
+            "rating": 4,
+            "answer_text": "It helped me find the song take again.",
+        },
+    )
+    cross_user_response = client.post(
+        f"/v1/sessions/{session_id}/feedback",
+        headers=_headers("other"),
+        json={"helped_review": "no", "rating": 1},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["session_id"] == session_id
+    assert payload["helped_review"] == "yes"
+    assert payload["rating"] == 4
+    assert payload["answer_text"] == "It helped me find the song take again."
+    assert payload["context"] == "post_analysis"
+    assert cross_user_response.status_code == 404
+
+
+def test_submit_session_feedback_validates_rating_and_answer(tmp_path):
+    client = _client(tmp_path)
+    upload = _upload(client).json()
+    session_id = upload["session"]["id"]
+
+    response = client.post(
+        f"/v1/sessions/{session_id}/feedback",
+        headers=_headers(),
+        json={"helped_review": "maybe", "rating": 6},
+    )
+
+    assert response.status_code == 422
+
+
 def test_job_status_is_scoped_to_session_owner(tmp_path):
     client = _client(tmp_path)
     upload = _upload(client).json()

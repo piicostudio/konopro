@@ -29,6 +29,13 @@ typedef SessionAnalysisClient =
       String betaIdentity,
       String sessionId,
     );
+typedef SubmitFeedbackClient =
+    Future<SessionFeedbackResult> Function(
+      Uri baseUrl,
+      String betaIdentity,
+      String sessionId,
+      SessionFeedbackDraft feedback,
+    );
 typedef SegmentPlaybackControllerFactory = SegmentPlaybackController Function();
 
 abstract class SegmentPlaybackController {
@@ -323,6 +330,52 @@ class SessionAnalysis {
   }
 }
 
+class SessionFeedbackDraft {
+  const SessionFeedbackDraft({
+    required this.helpedReview,
+    required this.rating,
+    this.answerText,
+  });
+
+  final String helpedReview;
+  final int rating;
+  final String? answerText;
+
+  Map<String, dynamic> toJson() => {
+    'helped_review': helpedReview,
+    'rating': rating,
+    if (answerText != null && answerText!.trim().isNotEmpty)
+      'answer_text': answerText!.trim(),
+    'context': 'post_analysis_playback',
+  };
+}
+
+class SessionFeedbackResult {
+  const SessionFeedbackResult({
+    required this.id,
+    required this.sessionId,
+    required this.helpedReview,
+    required this.rating,
+    this.answerText,
+  });
+
+  final String id;
+  final String sessionId;
+  final String helpedReview;
+  final int rating;
+  final String? answerText;
+
+  factory SessionFeedbackResult.fromJson(Map<String, dynamic> json) {
+    return SessionFeedbackResult(
+      id: json['id']?.toString() ?? '',
+      sessionId: json['session_id']?.toString() ?? '',
+      helpedReview: json['helped_review']?.toString() ?? 'not_sure',
+      rating: json['rating'] is num ? (json['rating'] as num).toInt() : 0,
+      answerText: json['answer_text']?.toString(),
+    );
+  }
+}
+
 Future<BackendHealth> defaultBackendHealthCheck(Uri baseUrl) async {
   final healthUri = baseUrl.replace(
     path: _joinUriPath(baseUrl.path, 'health'),
@@ -561,6 +614,54 @@ Future<SessionAnalysis> defaultSessionAnalysisClient(
   }
 }
 
+Future<SessionFeedbackResult> defaultSubmitFeedbackClient(
+  Uri baseUrl,
+  String betaIdentity,
+  String sessionId,
+  SessionFeedbackDraft feedback,
+) async {
+  final feedbackUri = baseUrl.replace(
+    path: _joinUriPath(baseUrl.path, '/v1/sessions/$sessionId/feedback'),
+    queryParameters: null,
+    fragment: null,
+  );
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+
+  try {
+    final request = await client.postUrl(feedbackUri);
+    request.headers.set('X-Konopro-Beta-User', betaIdentity);
+    request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
+    final body = utf8.encode(jsonEncode(feedback.toJson()));
+    request.contentLength = body.length;
+    request.add(body);
+
+    final response = await request.close().timeout(const Duration(seconds: 8));
+    final responseBody = await response.transform(utf8.decoder).join();
+
+    if (response.statusCode != HttpStatus.created) {
+      throw BackendConnectionException(
+        'Backend returned HTTP ${response.statusCode}.',
+      );
+    }
+
+    final decoded = jsonDecode(responseBody);
+    if (decoded is! Map<String, dynamic>) {
+      throw const BackendConnectionException('Backend returned invalid JSON.');
+    }
+    return SessionFeedbackResult.fromJson(decoded);
+  } on BackendConnectionException {
+    rethrow;
+  } on TimeoutException {
+    throw const BackendConnectionException('Feedback timed out.');
+  } on FormatException {
+    throw const BackendConnectionException('Backend returned invalid JSON.');
+  } on SocketException catch (error) {
+    throw BackendConnectionException(error.message);
+  } finally {
+    client.close(force: true);
+  }
+}
+
 MultipartUploadBody buildUploadSessionBody({
   required PickedAudioFile file,
   required String boundary,
@@ -632,6 +733,7 @@ class KonoProApp extends StatelessWidget {
     this.audioFilePicker,
     this.jobStatusClient,
     this.sessionAnalysisClient,
+    this.submitFeedbackClient,
     this.segmentPlaybackControllerFactory,
     this.jobPollInterval = const Duration(seconds: 2),
   });
@@ -642,6 +744,7 @@ class KonoProApp extends StatelessWidget {
   final AudioFilePicker? audioFilePicker;
   final JobStatusClient? jobStatusClient;
   final SessionAnalysisClient? sessionAnalysisClient;
+  final SubmitFeedbackClient? submitFeedbackClient;
   final SegmentPlaybackControllerFactory? segmentPlaybackControllerFactory;
   final Duration jobPollInterval;
 
@@ -679,6 +782,8 @@ class KonoProApp extends StatelessWidget {
         jobStatusClient: jobStatusClient ?? defaultJobStatusClient,
         sessionAnalysisClient:
             sessionAnalysisClient ?? defaultSessionAnalysisClient,
+        submitFeedbackClient:
+            submitFeedbackClient ?? defaultSubmitFeedbackClient,
         segmentPlaybackControllerFactory:
             segmentPlaybackControllerFactory ??
             () => JustAudioSegmentPlaybackController(),
@@ -696,6 +801,7 @@ class KonoProShell extends StatefulWidget {
     required this.audioFilePicker,
     required this.jobStatusClient,
     required this.sessionAnalysisClient,
+    required this.submitFeedbackClient,
     required this.segmentPlaybackControllerFactory,
     required this.jobPollInterval,
     super.key,
@@ -707,6 +813,7 @@ class KonoProShell extends StatefulWidget {
   final AudioFilePicker audioFilePicker;
   final JobStatusClient jobStatusClient;
   final SessionAnalysisClient sessionAnalysisClient;
+  final SubmitFeedbackClient submitFeedbackClient;
   final SegmentPlaybackControllerFactory segmentPlaybackControllerFactory;
   final Duration jobPollInterval;
 
@@ -743,6 +850,7 @@ class _KonoProShellState extends State<KonoProShell> {
         audioFilePicker: widget.audioFilePicker,
         jobStatusClient: widget.jobStatusClient,
         sessionAnalysisClient: widget.sessionAnalysisClient,
+        submitFeedbackClient: widget.submitFeedbackClient,
         segmentPlaybackControllerFactory:
             widget.segmentPlaybackControllerFactory,
         jobPollInterval: widget.jobPollInterval,
@@ -1377,6 +1485,7 @@ class RecordFlowScreen extends StatefulWidget {
     required this.audioFilePicker,
     required this.jobStatusClient,
     required this.sessionAnalysisClient,
+    required this.submitFeedbackClient,
     required this.segmentPlaybackControllerFactory,
     required this.jobPollInterval,
     super.key,
@@ -1388,6 +1497,7 @@ class RecordFlowScreen extends StatefulWidget {
   final AudioFilePicker audioFilePicker;
   final JobStatusClient jobStatusClient;
   final SessionAnalysisClient sessionAnalysisClient;
+  final SubmitFeedbackClient submitFeedbackClient;
   final SegmentPlaybackControllerFactory segmentPlaybackControllerFactory;
   final Duration jobPollInterval;
 
@@ -1555,6 +1665,7 @@ class _RecordFlowScreenState extends State<RecordFlowScreen> {
       analysis: _analysis,
       uploadError: _uploadError,
       analysisError: _analysisError,
+      submitFeedbackClient: widget.submitFeedbackClient,
       segmentPlaybackControllerFactory: widget.segmentPlaybackControllerFactory,
       isPicking: _isPicking,
       isUploading: _isUploading,
@@ -1640,6 +1751,7 @@ class RecordingScreen extends StatelessWidget {
     required this.analysis,
     required this.uploadError,
     required this.analysisError,
+    required this.submitFeedbackClient,
     required this.segmentPlaybackControllerFactory,
     required this.isPicking,
     required this.isUploading,
@@ -1657,6 +1769,7 @@ class RecordingScreen extends StatelessWidget {
   final SessionAnalysis? analysis;
   final String? uploadError;
   final String? analysisError;
+  final SubmitFeedbackClient submitFeedbackClient;
   final SegmentPlaybackControllerFactory segmentPlaybackControllerFactory;
   final bool isPicking;
   final bool isUploading;
@@ -1705,6 +1818,7 @@ class RecordingScreen extends StatelessWidget {
           analysisError: analysisError,
           backendUrl: backendUrl,
           betaIdentity: betaIdentity,
+          submitFeedbackClient: submitFeedbackClient,
           segmentPlaybackControllerFactory: segmentPlaybackControllerFactory,
           isPollingJob: isPollingJob,
         ),
@@ -1858,6 +1972,7 @@ class PickedUpCard extends StatelessWidget {
     required this.analysisError,
     required this.backendUrl,
     required this.betaIdentity,
+    required this.submitFeedbackClient,
     required this.segmentPlaybackControllerFactory,
     required this.isPollingJob,
     super.key,
@@ -1869,6 +1984,7 @@ class PickedUpCard extends StatelessWidget {
   final String? analysisError;
   final Uri? backendUrl;
   final String betaIdentity;
+  final SubmitFeedbackClient submitFeedbackClient;
   final SegmentPlaybackControllerFactory segmentPlaybackControllerFactory;
   final bool isPollingJob;
 
@@ -1904,8 +2020,11 @@ class PickedUpCard extends StatelessWidget {
           else if (analysis != null)
             AnalysisResults(
               analysis: analysis,
+              backendUrl: backendUrl,
+              sessionId: uploadResult!.session.id,
               audioUri: _sessionAudioUri(backendUrl, uploadResult!.session.id),
               betaIdentity: betaIdentity,
+              submitFeedbackClient: submitFeedbackClient,
               segmentPlaybackControllerFactory:
                   segmentPlaybackControllerFactory,
             )
@@ -1944,15 +2063,21 @@ class ProcessingStatusMessage extends StatelessWidget {
 class AnalysisResults extends StatefulWidget {
   const AnalysisResults({
     required this.analysis,
+    required this.backendUrl,
+    required this.sessionId,
     required this.audioUri,
     required this.betaIdentity,
+    required this.submitFeedbackClient,
     required this.segmentPlaybackControllerFactory,
     super.key,
   });
 
   final SessionAnalysis analysis;
+  final Uri? backendUrl;
+  final String sessionId;
   final Uri? audioUri;
   final String betaIdentity;
+  final SubmitFeedbackClient submitFeedbackClient;
   final SegmentPlaybackControllerFactory segmentPlaybackControllerFactory;
 
   @override
@@ -1961,9 +2086,15 @@ class AnalysisResults extends StatefulWidget {
 
 class _AnalysisResultsState extends State<AnalysisResults> {
   late final SegmentPlaybackController _playbackController;
+  final _feedbackController = TextEditingController();
   DetectedSongSegment? _playingSegment;
   DetectedSongSegment? _loadingSegment;
   String? _playbackError;
+  String _helpedReview = 'yes';
+  int _feedbackRating = 4;
+  bool _isSubmittingFeedback = false;
+  String? _feedbackError;
+  SessionFeedbackResult? _feedbackResult;
 
   @override
   void initState() {
@@ -1973,6 +2104,7 @@ class _AnalysisResultsState extends State<AnalysisResults> {
 
   @override
   void dispose() {
+    _feedbackController.dispose();
     unawaited(_playbackController.dispose());
     super.dispose();
   }
@@ -2015,6 +2147,44 @@ class _AnalysisResultsState extends State<AnalysisResults> {
     } finally {
       if (mounted) {
         setState(() => _loadingSegment = null);
+      }
+    }
+  }
+
+  Future<void> _submitFeedback() async {
+    final backendUrl = widget.backendUrl;
+    if (backendUrl == null) {
+      setState(() => _feedbackError = 'Connect to the backend first.');
+      return;
+    }
+
+    setState(() {
+      _isSubmittingFeedback = true;
+      _feedbackError = null;
+    });
+
+    try {
+      final result = await widget.submitFeedbackClient(
+        backendUrl,
+        widget.betaIdentity,
+        widget.sessionId,
+        SessionFeedbackDraft(
+          helpedReview: _helpedReview,
+          rating: _feedbackRating,
+          answerText: _feedbackController.text,
+        ),
+      );
+      if (!mounted) return;
+      setState(() => _feedbackResult = result);
+    } on BackendConnectionException catch (error) {
+      if (!mounted) return;
+      setState(() => _feedbackError = error.message);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _feedbackError = error.toString());
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmittingFeedback = false);
       }
     }
   }
@@ -2062,7 +2232,135 @@ class _AnalysisResultsState extends State<AnalysisResults> {
               isLoading: _loadingSegment == segment,
               onToggle: () => _togglePlayback(segment),
             ),
+        const SizedBox(height: 8),
+        FeedbackPromptCard(
+          helpedReview: _helpedReview,
+          rating: _feedbackRating,
+          noteController: _feedbackController,
+          isSubmitting: _isSubmittingFeedback,
+          submitted: _feedbackResult != null,
+          errorMessage: _feedbackError,
+          onHelpedReviewChanged: (value) =>
+              setState(() => _helpedReview = value),
+          onRatingChanged: (value) => setState(() => _feedbackRating = value),
+          onSubmit: _submitFeedback,
+        ),
       ],
+    );
+  }
+}
+
+class FeedbackPromptCard extends StatelessWidget {
+  const FeedbackPromptCard({
+    required this.helpedReview,
+    required this.rating,
+    required this.noteController,
+    required this.isSubmitting,
+    required this.submitted,
+    required this.errorMessage,
+    required this.onHelpedReviewChanged,
+    required this.onRatingChanged,
+    required this.onSubmit,
+    super.key,
+  });
+
+  final String helpedReview;
+  final int rating;
+  final TextEditingController noteController;
+  final bool isSubmitting;
+  final bool submitted;
+  final String? errorMessage;
+  final ValueChanged<String> onHelpedReviewChanged;
+  final ValueChanged<int> onRatingChanged;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    if (submitted) {
+      return const SessionMessage(
+        icon: Icons.check_circle_outline,
+        title: 'Feedback saved',
+        detail: 'Your answer is attached to this session.',
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Divider(height: 22),
+          const Text(
+            'Did this help review or track practice?',
+            style: TextStyle(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            children: [
+              ChoiceChip(
+                label: const Text('Yes'),
+                selected: helpedReview == 'yes',
+                onSelected: (_) => onHelpedReviewChanged('yes'),
+              ),
+              ChoiceChip(
+                label: const Text('Not sure'),
+                selected: helpedReview == 'not_sure',
+                onSelected: (_) => onHelpedReviewChanged('not_sure'),
+              ),
+              ChoiceChip(
+                label: const Text('No'),
+                selected: helpedReview == 'no',
+                onSelected: (_) => onHelpedReviewChanged('no'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Text('Rating'),
+              const SizedBox(width: 10),
+              for (var value = 1; value <= 5; value += 1)
+                IconButton(
+                  onPressed: () => onRatingChanged(value),
+                  icon: Icon(value <= rating ? Icons.star : Icons.star_border),
+                  tooltip: '$value out of 5',
+                ),
+            ],
+          ),
+          TextField(
+            controller: noteController,
+            minLines: 1,
+            maxLines: 3,
+            maxLength: 500,
+            decoration: const InputDecoration(
+              labelText: 'Short note',
+              hintText: 'What helped, or what was missing?',
+              prefixIcon: Icon(Icons.chat_bubble_outline),
+            ),
+          ),
+          if (errorMessage != null)
+            SessionMessage(
+              icon: Icons.error_outline,
+              title: 'Feedback failed',
+              detail: errorMessage!,
+            ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              onPressed: isSubmitting ? null : onSubmit,
+              icon: isSubmitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.send),
+              label: Text(isSubmitting ? 'Saving' : 'Send feedback'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

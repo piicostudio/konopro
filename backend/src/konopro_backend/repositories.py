@@ -21,6 +21,7 @@ from konopro_backend.models import (
     ReportPriority,
     ReportRequest,
     ReportRequestStatus,
+    SessionFeedback,
     SessionStatus,
     SongIntervalRecord,
     WeakCandidateRecord,
@@ -407,6 +408,27 @@ def get_session_analysis(db: Session, session_id: str) -> SessionAnalysis | None
         weak_candidates=weak_candidates,
         diagnostic=diagnostic,
     )
+
+
+def create_session_feedback(
+    db: Session,
+    *,
+    user_id: str,
+    session_id: str,
+    helped_review: str,
+    rating: int,
+    answer_text: str | None,
+    context: str,
+) -> SessionFeedback:
+    feedback = SessionFeedback(
+        user_id=user_id,
+        session_id=session_id,
+        helped_review=helped_review,
+        rating=rating,
+        answer_text=answer_text,
+        context=context,
+    )
+    return _commit_refresh(db, feedback)
 
 
 def delete_session_analysis(db: Session, session_id: str, *, commit: bool = True) -> int:

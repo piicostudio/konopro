@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field as PydanticField
 
 from konopro_backend.models import JobStatus, ReportPriority, ReportRequestStatus, SessionStatus
 
@@ -152,6 +152,26 @@ class FingerprintAnalysisResponse(BaseModel):
     intervals: list[SongIntervalResponse]
     weak_candidates: list[WeakCandidateResponse]
     diagnostic: FingerprintDiagnosticResponse | None
+
+
+class SessionFeedbackCreate(BaseModel):
+    helped_review: str = PydanticField(pattern="^(yes|not_sure|no)$")
+    rating: int = PydanticField(ge=1, le=5)
+    answer_text: str | None = PydanticField(default=None, max_length=500)
+    context: str = PydanticField(default="post_analysis", max_length=80)
+
+
+class SessionFeedbackResponse(BaseModel):
+    id: str
+    user_id: str
+    session_id: str
+    helped_review: str
+    rating: int
+    answer_text: str | None
+    context: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ReportRequestCreate(BaseModel):

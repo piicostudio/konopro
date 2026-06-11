@@ -9,13 +9,19 @@ from konopro_backend.dependencies import get_beta_user_key, get_db, get_settings
 from konopro_backend.repositories import (
     create_audio_session,
     create_processing_job,
+    create_session_feedback,
     get_audio_session,
     get_or_create_beta_user,
     get_processing_job,
     list_audio_sessions_for_user,
     soft_delete_audio_session,
 )
-from konopro_backend.schemas import AudioSessionResponse, UploadSessionResponse
+from konopro_backend.schemas import (
+    AudioSessionResponse,
+    SessionFeedbackCreate,
+    SessionFeedbackResponse,
+    UploadSessionResponse,
+)
 from konopro_backend.storage import LocalAudioStorage, StorageValidationError
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
@@ -115,6 +121,32 @@ def download_session_audio(
         path,
         media_type=audio_session.content_type,
         filename=audio_session.original_filename,
+    )
+
+
+@router.post(
+    "/{session_id}/feedback",
+    response_model=SessionFeedbackResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def submit_session_feedback(
+    session_id: str,
+    payload: SessionFeedbackCreate,
+    beta_user_key: str = Depends(get_beta_user_key),
+    db: Session = Depends(get_db),
+) -> SessionFeedbackResponse:
+    user = get_or_create_beta_user(db, beta_user_key)
+    audio_session = get_audio_session(db, session_id, user_id=user.id)
+    if audio_session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return create_session_feedback(
+        db,
+        user_id=user.id,
+        session_id=audio_session.id,
+        helped_review=payload.helped_review,
+        rating=payload.rating,
+        answer_text=payload.answer_text,
+        context=payload.context,
     )
 
 

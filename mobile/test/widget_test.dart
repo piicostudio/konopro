@@ -184,6 +184,37 @@ void main() {
     expect(analysis.weakCandidates.single.reason, 'singleton_match');
   });
 
+  test('SessionFeedbackDraft serializes minimal feedback payload', () {
+    const draft = SessionFeedbackDraft(
+      helpedReview: 'not_sure',
+      rating: 3,
+      answerText: '  I need clearer playback.  ',
+    );
+
+    expect(draft.toJson(), {
+      'helped_review': 'not_sure',
+      'rating': 3,
+      'answer_text': 'I need clearer playback.',
+      'context': 'post_analysis_playback',
+    });
+  });
+
+  test('SessionFeedbackResult decodes backend feedback JSON', () {
+    final result = SessionFeedbackResult.fromJson({
+      'id': 'feedback-1',
+      'session_id': 'session-1',
+      'helped_review': 'yes',
+      'rating': 5,
+      'answer_text': 'Useful for review.',
+    });
+
+    expect(result.id, 'feedback-1');
+    expect(result.sessionId, 'session-1');
+    expect(result.helpedReview, 'yes');
+    expect(result.rating, 5);
+    expect(result.answerText, 'Useful for review.');
+  });
+
   test('multipart upload body includes file and source parts', () {
     final body = buildUploadSessionBody(
       file: sampleFile,
@@ -474,6 +505,83 @@ void main() {
 
     expect(playbackController.pauseCount, 1);
     expect(find.byIcon(Icons.play_arrow), findsWidgets);
+  });
+
+  testWidgets('record analysis submits lightweight feedback', (tester) async {
+    tester.view.physicalSize = const Size(800, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final playbackController = FakeSegmentPlaybackController();
+    Uri? feedbackBaseUrl;
+    String? feedbackIdentity;
+    String? feedbackSessionId;
+    SessionFeedbackDraft? submittedFeedback;
+
+    await tester.pumpWidget(
+      KonoProApp(
+        healthCheckClient: (_) async =>
+            const BackendHealth(status: 'ok', environment: 'local'),
+        sessionListClient: (_, _) async => [],
+        audioFilePicker: () async => sampleFile,
+        uploadSessionClient: (_, _, _) async =>
+            UploadSessionResult(session: sampleSession, job: sampleJob),
+        jobStatusClient: (_, _, _) async => completedJob,
+        sessionAnalysisClient: (_, _, _) async => sampleAnalysis,
+        submitFeedbackClient:
+            (baseUrl, betaIdentity, sessionId, feedback) async {
+              feedbackBaseUrl = baseUrl;
+              feedbackIdentity = betaIdentity;
+              feedbackSessionId = sessionId;
+              submittedFeedback = feedback;
+              return const SessionFeedbackResult(
+                id: 'feedback-1',
+                sessionId: 'session-1',
+                helpedReview: 'yes',
+                rating: 4,
+                answerText: 'Useful, but I need clearer labels.',
+              );
+            },
+        segmentPlaybackControllerFactory: () => playbackController,
+        jobPollInterval: Duration.zero,
+      ),
+    );
+
+    await tester.tap(find.text('Test connection'));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.text('Record'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK, start recording'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose file'));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.text('Upload'));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('Did this help review or track practice?'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.enterText(
+      find.byType(TextField).last,
+      'Useful, but I need clearer labels.',
+    );
+    await tester.ensureVisible(find.text('Send feedback'));
+    await tester.tap(find.text('Send feedback'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(feedbackBaseUrl.toString(), 'http://127.0.0.1:8000');
+    expect(feedbackIdentity, 'peter-demo');
+    expect(feedbackSessionId, 'session-1');
+    expect(submittedFeedback?.helpedReview, 'yes');
+    expect(submittedFeedback?.rating, 4);
+    expect(submittedFeedback?.answerText, 'Useful, but I need clearer labels.');
+    expect(find.text('Feedback saved'), findsOneWidget);
   });
 
   testWidgets('record upload displays weak analysis without overclaiming', (
