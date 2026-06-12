@@ -193,8 +193,8 @@
 
           <p class="health-status" id="healthStatus" role="status" aria-live="polite">Backend: not checked</p>
 
-          <form class="analysis-form fake-door-form" id="analysisForm">
-            <div class="analysis-form__grid">
+          <form class="analysis-form fake-door-form" id="analysisForm" novalidate>
+            <div class="analysis-form__grid analysis-settings">
               <div class="fake-door-form__field">
                 <label for="apiBaseUrl">Backend URL</label>
                 <input id="apiBaseUrl" name="apiBaseUrl" type="url" value="http://127.0.0.1:8000" autocomplete="url">
@@ -206,12 +206,20 @@
               </div>
             </div>
 
-            <div class="analysis-form__grid">
+            <div class="flow-rail" aria-label="Analysis steps">
+              <span class="flow-step is-active" id="flowStepUpload">1. Upload</span>
+              <span class="flow-step" id="flowStepReference">2. Match original</span>
+              <span class="flow-step" id="flowStepAnalyze">3. Analyze</span>
+            </div>
+
+            <input id="youtubeUrl" name="youtubeUrl" type="hidden">
+
+            <section class="flow-panel upload-panel" id="uploadStage" aria-labelledby="uploadStageTitle">
               <div class="audio-card" data-audio-card="take">
                 <div class="audio-card__header">
                   <div>
                     <span class="audio-card__eyebrow">Required take</span>
-                    <label class="audio-card__title" for="takeAudio">내 노래 녹음</label>
+                    <label class="audio-card__title" id="uploadStageTitle" for="takeAudio">Upload your cover recording.</label>
                   </div>
                   <span class="audio-card__badge">User</span>
                 </div>
@@ -234,31 +242,100 @@
                 </div>
               </div>
 
-              <div class="reference-card">
-                <div class="reference-card__header">
-                  <div>
-                    <span class="reference-card__eyebrow">Reference song</span>
-                    <label class="reference-card__title" for="youtubeUrl">YouTube URL</label>
-                  </div>
-                  <span class="reference-card__badge">Original</span>
-                </div>
+              <div class="flow-panel__actions">
+                <button class="btn btn--primary" type="submit" id="submitButton">Next</button>
+                <button class="btn btn--outline" type="button" id="clearButton">초기화</button>
+              </div>
+            </section>
 
-                <div class="reference-card__body">
-                  <div class="reference-card__icon" aria-hidden="true">
-                    <span></span>
+            <section class="flow-panel reference-confirm is-hidden" id="confirmStage" aria-labelledby="confirmTitle">
+              <div class="reference-confirm__copy">
+                <span class="section__label">Confirm Reference</span>
+                <h4 id="confirmTitle">Is this the original song you sang?</h4>
+                <p>The scoring job starts only after you confirm the matching original.</p>
+              </div>
+
+              <div class="reference-confirm__grid">
+                <div class="youtube-embed">
+                  <iframe id="confirmYoutubeEmbed" title="Original song preview" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+                </div>
+                <div class="reference-card reference-card--compact">
+                  <div class="reference-card__header">
+                    <div>
+                      <span class="reference-card__eyebrow">Reference song</span>
+                      <p class="reference-card__title">YouTube URL</p>
+                    </div>
+                    <span class="reference-card__badge">Original</span>
                   </div>
-                  <div class="reference-card__field">
-                    <input id="youtubeUrl" name="youtubeUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." required>
-                    <p>원곡 영상 링크를 붙여넣으면 백엔드가 같은 곡을 기준으로 분석합니다.</p>
-                  </div>
+                  <a class="reference-confirm__url" id="confirmYoutubeLink" href="#" target="_blank" rel="noopener">Open YouTube</a>
                 </div>
               </div>
-            </div>
 
-            <div class="analysis-form__actions">
-              <button class="btn btn--primary" type="submit" id="submitButton">분석 요청</button>
-              <button class="btn btn--outline" type="button" id="clearButton">초기화</button>
-            </div>
+              <div class="flow-panel__actions">
+                <button class="btn btn--primary" type="button" id="confirmAnalyzeButton">Yes, analyze</button>
+                <button class="btn btn--outline" type="button" id="changeYoutubeButton">Change URL</button>
+              </div>
+            </section>
+
+            <section class="flow-panel processing-panel is-hidden" id="processingStage" aria-labelledby="processingTitle">
+              <div class="processing-panel__top">
+                <div class="loader-ring" aria-hidden="true"></div>
+                <div>
+                  <span class="section__label">Processing</span>
+                  <h4 id="processingTitle">Analyzing your take</h4>
+                  <p id="processingHint">The backend is fetching the original song and comparing it against your recording.</p>
+                </div>
+              </div>
+
+              <div class="processing-timeline" aria-label="Analysis progress">
+                <div class="processing-timeline__current" aria-live="polite">
+                  <span>Now checking</span>
+                  <strong id="processingStepTitle">Preparing analysis</strong>
+                  <p id="processingStepText">Your upload and reference song are queued for comparison.</p>
+                </div>
+                <ol class="processing-steps" id="processingStepList"></ol>
+              </div>
+
+              <div class="question-grid" id="workflowQuestionForm" role="group" aria-labelledby="workflowQuestionTitle">
+                <div class="question-grid__header">
+                  <h4 id="workflowQuestionTitle">Quick questions while this runs</h4>
+                  <p id="questionProgress">0 of 4 answered</p>
+                </div>
+
+                <fieldset class="question-card">
+                  <legend>How would you most likely use this with karaoke?</legend>
+                  <label><input type="radio" name="karaokeUse" value="whole_session"><span>Record whole session</span></label>
+                  <label><input type="radio" name="karaokeUse" value="one_song"><span>Record one song at a time</span></label>
+                  <label><input type="radio" name="karaokeUse" value="upload_later"><span>Upload existing recording later</span></label>
+                </fieldset>
+
+                <fieldset class="question-card">
+                  <legend>Where are you using this now?</legend>
+                  <label><input type="radio" name="deviceContext" value="phone"><span>Phone</span></label>
+                  <label><input type="radio" name="deviceContext" value="laptop"><span>Laptop</span></label>
+                  <label><input type="radio" name="deviceContext" value="tablet"><span>Tablet</span></label>
+                </fieldset>
+
+                <fieldset class="question-card">
+                  <legend>If this worked well, would removing the upload step make you install an app?</legend>
+                  <label><input type="radio" name="appInstall" value="yes"><span>Yes</span></label>
+                  <label><input type="radio" name="appInstall" value="no"><span>No</span></label>
+                  <label><input type="radio" name="appInstall" value="not_sure"><span>Not sure</span></label>
+                </fieldset>
+
+                <fieldset class="question-card">
+                  <legend>What would you want the result to tell you first?</legend>
+                  <label><input type="radio" name="resultPriority" value="practice_next"><span>What to practice next</span></label>
+                  <label><input type="radio" name="resultPriority" value="improved"><span>Whether I improved</span></label>
+                  <label><input type="radio" name="resultPriority" value="close_to_original"><span>How close I was to the original</span></label>
+                  <label><input type="radio" name="resultPriority" value="recording_good"><span>Whether this recording was good</span></label>
+                </fieldset>
+              </div>
+
+              <div class="result-gate is-hidden" id="resultGate" role="status" aria-live="polite">
+                Analysis is ready. Finish the quick questions to unlock your result.
+              </div>
+            </section>
           </form>
 
           <div class="job-status" id="jobStatus" role="status" aria-live="polite">
@@ -279,45 +356,34 @@
           <div class="analysis-result__empty" id="emptyResult">분석 결과가 여기에 표시됩니다.</div>
 
           <div class="analysis-result__layout is-hidden" id="resultLayout">
-            <div class="metric-grid" id="metricGrid"></div>
-            <div class="feedback-panel">
-              <h4>Practice feedback</h4>
-              <ul id="feedbackList"></ul>
-              <div class="warning-box is-hidden" id="warningBox">
-                <h4>Warnings</h4>
-                <ul id="warningList"></ul>
+            <article class="result-card result-card--upload">
+              <span class="section__label">Your upload</span>
+              <h4 id="resultTakeFileName">Cover recording</h4>
+              <p id="resultTakeMeta">Selected audio appears here.</p>
+              <audio id="resultTakeAudioPlayer" controls preload="metadata"></audio>
+            </article>
+
+            <article class="result-card result-card--reference">
+              <span class="section__label">Original song</span>
+              <div class="youtube-embed youtube-embed--result">
+                <iframe id="resultYoutubeEmbed" title="Confirmed original song" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
               </div>
-            </div>
+              <a class="reference-confirm__url" id="resultYoutubeLink" href="#" target="_blank" rel="noopener">Open YouTube</a>
+            </article>
+
+            <article class="result-card result-card--scores">
+              <span class="section__label">Scores</span>
+              <div class="metric-grid" id="metricGrid"></div>
+              <div class="feedback-panel">
+                <h4>Practice feedback</h4>
+                <ul id="feedbackList"></ul>
+                <div class="warning-box is-hidden" id="warningBox">
+                  <h4>Warnings</h4>
+                  <ul id="warningList"></ul>
+                </div>
+              </div>
+            </article>
           </div>
-        </div>
-
-        <div class="service-feedback reveal" id="feedback" aria-labelledby="feedbackTitle">
-          <div>
-            <span class="section__label">Tester Feedback</span>
-            <h3 class="service-feedback__title" id="feedbackTitle">이 결과가 연습 복기에 도움이 되었나요?</h3>
-          </div>
-
-          <form class="feedback-form" id="feedbackForm">
-            <fieldset class="segmented">
-              <legend>도움 여부</legend>
-              <label><input type="radio" name="helpedReview" value="yes" checked><span>Yes</span></label>
-              <label><input type="radio" name="helpedReview" value="not_sure"><span>Not sure</span></label>
-              <label><input type="radio" name="helpedReview" value="no"><span>No</span></label>
-            </fieldset>
-
-            <div class="fake-door-form__field">
-              <label for="feedbackRating">Rating</label>
-              <input id="feedbackRating" name="feedbackRating" type="range" min="1" max="5" value="4">
-            </div>
-
-            <div class="fake-door-form__field">
-              <label for="feedbackAnswer">Short answer</label>
-              <textarea id="feedbackAnswer" name="feedbackAnswer" rows="3" maxlength="500" placeholder="어떤 점이 도움이 됐거나 부족했나요?"></textarea>
-            </div>
-
-            <button class="btn btn--primary btn--full" type="submit" id="feedbackButton" disabled>피드백 저장</button>
-            <p class="feedback-status" id="feedbackStatus" role="status" aria-live="polite"></p>
-          </form>
         </div>
       </div>
     </section>
@@ -354,6 +420,29 @@
 
         <button type="submit" class="btn btn--primary btn--full">베타 코드 받기</button>
         <p id="formFeedback" class="form-feedback" role="status" aria-live="polite"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="reveal-modal youtube-url-modal" id="youtubeModal" aria-hidden="true">
+    <div class="reveal-modal__overlay" data-close-youtube-modal></div>
+    <div class="reveal-modal__content youtube-url-modal__content" role="dialog" aria-modal="true" aria-labelledby="youtubeModalTitle">
+      <button type="button" class="reveal-modal__close" aria-label="닫기" data-close-youtube-modal>&times;</button>
+      <h2 class="reveal-modal__title" id="youtubeModalTitle">Paste the original singer's YouTube URL for the same song.</h2>
+      <p class="reveal-modal__message">We will show the video first so you can confirm it before analysis starts.</p>
+
+      <form id="youtubeUrlForm" class="fake-door-form" novalidate>
+        <div class="fake-door-form__field">
+          <label for="youtubeModalUrl">YouTube URL</label>
+          <input id="youtubeModalUrl" name="youtubeModalUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." autocomplete="url" required>
+        </div>
+
+        <p class="form-feedback" id="youtubeModalError" role="status" aria-live="polite"></p>
+
+        <div class="analysis-form__actions">
+          <button type="submit" class="btn btn--primary">Preview original</button>
+          <button type="button" class="btn btn--outline" data-close-youtube-modal>Cancel</button>
+        </div>
       </form>
     </div>
   </div>

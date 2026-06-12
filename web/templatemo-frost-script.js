@@ -3,14 +3,45 @@
 
   var elements = {};
   var pollTimer = null;
+  var processingStageTimer = null;
+  var processingStageIndex = 0;
   var activeSessionId = null;
   var audioPreviewUrls = {
     take: null
   };
   var storageKeys = {
     apiBaseUrl: "konopro.apiBaseUrl",
-    betaUserKey: "konopro.betaUserKey"
+    betaUserKey: "konopro.betaUserKey",
+    workflowAnswers: "konopro.workflowQuestionAnswers"
   };
+  var questionNames = ["karaokeUse", "deviceContext", "appInstall", "resultPriority"];
+  var processingStages = [
+    {
+      title: "Loading YouTube reference",
+      text: "Downloading the original singer's track so your take can be compared against the same song."
+    },
+    {
+      title: "Preparing both audio files",
+      text: "Normalizing the upload and reference so pitch and timing can be measured on the same footing."
+    },
+    {
+      title: "Tracing pitch differences",
+      text: "Following the melody contour and finding where your notes drift sharp, flat, or stay centered."
+    },
+    {
+      title: "Checking timing alignment",
+      text: "Matching phrases between your recording and the reference to estimate timing offset."
+    },
+    {
+      title: "Measuring stability and coverage",
+      text: "Checking how steady the voiced sections are and how much usable singing was detected."
+    },
+    {
+      title: "Building final feedback",
+      text: "Combining the scores into practice notes and warnings you can actually use."
+    }
+  ];
+  var flowState = createInitialFlowState();
 
   document.addEventListener("DOMContentLoaded", function () {
     cacheElements();
@@ -41,8 +72,30 @@
       takeFileSize: document.getElementById("takeFileSize"),
       submitButton: document.getElementById("submitButton"),
       clearButton: document.getElementById("clearButton"),
+      uploadStage: document.getElementById("uploadStage"),
+      confirmStage: document.getElementById("confirmStage"),
+      processingStage: document.getElementById("processingStage"),
+      flowStepUpload: document.getElementById("flowStepUpload"),
+      flowStepReference: document.getElementById("flowStepReference"),
+      flowStepAnalyze: document.getElementById("flowStepAnalyze"),
+      youtubeModal: document.getElementById("youtubeModal"),
+      youtubeUrlForm: document.getElementById("youtubeUrlForm"),
+      youtubeModalUrl: document.getElementById("youtubeModalUrl"),
+      youtubeModalError: document.getElementById("youtubeModalError"),
+      confirmYoutubeEmbed: document.getElementById("confirmYoutubeEmbed"),
+      confirmYoutubeLink: document.getElementById("confirmYoutubeLink"),
+      confirmAnalyzeButton: document.getElementById("confirmAnalyzeButton"),
+      changeYoutubeButton: document.getElementById("changeYoutubeButton"),
+      workflowQuestionForm: document.getElementById("workflowQuestionForm"),
+      questionProgress: document.getElementById("questionProgress"),
+      resultGate: document.getElementById("resultGate"),
+      processingHint: document.getElementById("processingHint"),
+      processingStepTitle: document.getElementById("processingStepTitle"),
+      processingStepText: document.getElementById("processingStepText"),
+      processingStepList: document.getElementById("processingStepList"),
       jobStatus: document.getElementById("jobStatus"),
       jobStatusText: document.getElementById("jobStatusText"),
+      result: document.getElementById("result"),
       emptyResult: document.getElementById("emptyResult"),
       resultLayout: document.getElementById("resultLayout"),
       overallScore: document.getElementById("overallScore"),
@@ -50,11 +103,25 @@
       feedbackList: document.getElementById("feedbackList"),
       warningBox: document.getElementById("warningBox"),
       warningList: document.getElementById("warningList"),
-      feedbackForm: document.getElementById("feedbackForm"),
-      feedbackButton: document.getElementById("feedbackButton"),
-      feedbackStatus: document.getElementById("feedbackStatus"),
-      feedbackRating: document.getElementById("feedbackRating"),
-      feedbackAnswer: document.getElementById("feedbackAnswer")
+      resultTakeFileName: document.getElementById("resultTakeFileName"),
+      resultTakeMeta: document.getElementById("resultTakeMeta"),
+      resultTakeAudioPlayer: document.getElementById("resultTakeAudioPlayer"),
+      resultYoutubeEmbed: document.getElementById("resultYoutubeEmbed"),
+      resultYoutubeLink: document.getElementById("resultYoutubeLink")
+    };
+  }
+
+  function createInitialFlowState() {
+    return {
+      youtubeUrl: "",
+      youtubeVideoId: "",
+      scoringRun: null,
+      analysisReady: false,
+      analysisFailed: false,
+      questionsComplete: false,
+      questionAnswers: {},
+      questionFeedbackSent: false,
+      resultRendered: false
     };
   }
 
@@ -240,11 +307,34 @@
     persistSettings();
 
     elements.healthCheckButton.addEventListener("click", checkHealth);
-    elements.analysisForm.addEventListener("submit", submitAnalysis);
+    elements.analysisForm.addEventListener("submit", handleUploadStep);
     elements.clearButton.addEventListener("click", resetScoringUi);
-    elements.feedbackForm.addEventListener("submit", submitFeedback);
     elements.apiBaseUrl.addEventListener("change", persistSettings);
     elements.betaUserKey.addEventListener("change", persistSettings);
+    if (elements.youtubeUrlForm) {
+      elements.youtubeUrlForm.addEventListener("submit", handleYoutubeUrlSubmit);
+    }
+    if (elements.youtubeModal) {
+      elements.youtubeModal.querySelectorAll("[data-close-youtube-modal]").forEach(function (closer) {
+        closer.addEventListener("click", closeYoutubeModal);
+      });
+    }
+    if (elements.confirmAnalyzeButton) {
+      elements.confirmAnalyzeButton.addEventListener("click", startConfirmedAnalysis);
+    }
+    if (elements.changeYoutubeButton) {
+      elements.changeYoutubeButton.addEventListener("click", function () {
+        openYoutubeModal(flowState.youtubeUrl);
+      });
+    }
+    if (elements.workflowQuestionForm) {
+      elements.workflowQuestionForm.addEventListener("change", updateQuestionProgress);
+    }
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && elements.youtubeModal && elements.youtubeModal.classList.contains("is-open")) {
+        closeYoutubeModal();
+      }
+    });
     initAudioPicker({
       key: "take",
       card: elements.takeAudioCard,
@@ -255,6 +345,10 @@
       fileName: elements.takeFileName,
       fileSize: elements.takeFileSize
     });
+    renderProcessingStages();
+    setProcessingStage(0, "idle");
+    showFlowPanel("upload");
+    updateQuestionProgress();
   }
 
   function defaultTesterId() {
@@ -425,6 +519,80 @@
     return /\.(aac|aif|aiff|flac|m4a|mp3|ogg|opus|wav|webm)$/i.test(file.name);
   }
 
+  function renderProcessingStages() {
+    if (!elements.processingStepList) {
+      return;
+    }
+    elements.processingStepList.innerHTML = processingStages.map(function (stage, index) {
+      return (
+        '<li class="processing-step" data-processing-step="' + index + '">' +
+        '<span class="processing-step__copy">' +
+        '<span class="processing-step__title">' + escapeHtml(stage.title) + "</span>" +
+        '<span class="processing-step__desc">' + escapeHtml(stage.text) + "</span>" +
+        "</span>" +
+        "</li>"
+      );
+    }).join("");
+  }
+
+  function startProcessingNarrative() {
+    clearProcessingStageTimer();
+    processingStageIndex = 0;
+    setProcessingStage(0, "active");
+    processingStageTimer = window.setInterval(function () {
+      var nextIndex = Math.min(processingStageIndex + 1, processingStages.length - 1);
+      if (nextIndex !== processingStageIndex) {
+        setProcessingStage(nextIndex, "active");
+      }
+    }, 3600);
+  }
+
+  function completeProcessingNarrative() {
+    clearProcessingStageTimer();
+    setProcessingStage(processingStages.length - 1, "done");
+    elements.processingStepTitle.textContent = "Analysis complete";
+    elements.processingStepText.textContent = "Scores and practice feedback are ready. Finish the quick questions to unlock them.";
+  }
+
+  function failProcessingNarrative(message) {
+    clearProcessingStageTimer();
+    setProcessingStage(processingStageIndex, "failed");
+    elements.processingStepTitle.textContent = "Analysis stopped";
+    elements.processingStepText.textContent = message || "The backend could not finish this analysis.";
+  }
+
+  function setProcessingStage(index, state) {
+    if (!elements.processingStepList || !elements.processingStepTitle || !elements.processingStepText) {
+      return;
+    }
+    processingStageIndex = Math.max(0, Math.min(index, processingStages.length - 1));
+    var activeStage = processingStages[processingStageIndex];
+    elements.processingStepTitle.textContent = activeStage.title;
+    elements.processingStepText.textContent = activeStage.text;
+
+    elements.processingStepList.querySelectorAll("[data-processing-step]").forEach(function (item) {
+      var itemIndex = Number(item.getAttribute("data-processing-step"));
+      item.classList.remove("is-active", "is-done", "is-failed");
+      if (state === "idle") {
+        return;
+      }
+      if (state === "done" || itemIndex < processingStageIndex) {
+        item.classList.add("is-done");
+      } else if (state === "failed" && itemIndex === processingStageIndex) {
+        item.classList.add("is-failed");
+      } else if (itemIndex === processingStageIndex) {
+        item.classList.add("is-active");
+      }
+    });
+  }
+
+  function clearProcessingStageTimer() {
+    if (processingStageTimer) {
+      window.clearInterval(processingStageTimer);
+      processingStageTimer = null;
+    }
+  }
+
   function checkHealth() {
     persistSettings();
     setHealth("Checking backend...", "working");
@@ -438,10 +606,15 @@
       });
   }
 
-  function submitAnalysis(event) {
+  function handleUploadStep(event) {
     event.preventDefault();
     persistSettings();
     resetResult();
+    flowState.analysisReady = false;
+    flowState.analysisFailed = false;
+    flowState.scoringRun = null;
+    flowState.questionFeedbackSent = false;
+    flowState.resultRendered = false;
 
     var takeFile = elements.takeAudio.files && elements.takeAudio.files[0];
     if (!betaUserKey()) {
@@ -453,12 +626,97 @@
       return;
     }
 
+    setJobStatus("Cover uploaded locally. Add the original YouTube link next.", "good");
+    openYoutubeModal(flowState.youtubeUrl);
+  }
+
+  function openYoutubeModal(defaultUrl) {
+    if (!elements.youtubeModal || !elements.youtubeModalUrl) {
+      return;
+    }
+    elements.youtubeModal.classList.add("is-open");
+    elements.youtubeModal.setAttribute("aria-hidden", "false");
+    elements.youtubeModalUrl.value = defaultUrl || elements.youtubeUrl.value || "";
+    elements.youtubeModalError.textContent = "";
+    elements.youtubeModalError.classList.remove("is-error", "is-success");
+    document.body.style.overflow = "hidden";
+    setTimeout(function () {
+      elements.youtubeModalUrl.focus();
+    }, 120);
+  }
+
+  function closeYoutubeModal() {
+    if (!elements.youtubeModal) {
+      return;
+    }
+    elements.youtubeModal.classList.remove("is-open");
+    elements.youtubeModal.setAttribute("aria-hidden", "true");
+    document.body.style.overflow = "";
+  }
+
+  function handleYoutubeUrlSubmit(event) {
+    event.preventDefault();
+    var url = elements.youtubeModalUrl.value.trim();
+    var videoId = extractYoutubeVideoId(url);
+    if (!videoId) {
+      elements.youtubeModalError.classList.add("is-error");
+      elements.youtubeModalError.textContent = "Paste a valid YouTube watch, youtu.be, shorts, live, or embed URL.";
+      return;
+    }
+
+    flowState.youtubeUrl = url;
+    flowState.youtubeVideoId = videoId;
+    elements.youtubeUrl.value = url;
+    renderReferenceConfirmation();
+    closeYoutubeModal();
+    showFlowPanel("confirm");
+    setJobStatus("Reference loaded. Confirm this is the original song you sang.", "good");
+  }
+
+  function renderReferenceConfirmation() {
+    var embedUrl = youtubeEmbedUrl(flowState.youtubeVideoId);
+    elements.confirmYoutubeEmbed.src = embedUrl;
+    elements.confirmYoutubeLink.href = flowState.youtubeUrl;
+    elements.confirmYoutubeLink.textContent = flowState.youtubeUrl;
+    elements.resultYoutubeEmbed.src = embedUrl;
+    elements.resultYoutubeLink.href = flowState.youtubeUrl;
+    elements.resultYoutubeLink.textContent = flowState.youtubeUrl;
+  }
+
+  function startConfirmedAnalysis() {
+    persistSettings();
+    resetResult();
+
+    var takeFile = elements.takeAudio.files && elements.takeAudio.files[0];
+    if (!takeFile) {
+      showFlowPanel("upload");
+      setJobStatus("내 노래 녹음 파일을 선택하세요.", "error");
+      return;
+    }
+    if (!flowState.youtubeUrl || !flowState.youtubeVideoId) {
+      openYoutubeModal("");
+      setJobStatus("원곡 YouTube URL을 먼저 입력하세요.", "error");
+      return;
+    }
+
     var data = new FormData();
-    data.append("youtube_url", elements.youtubeUrl.value.trim());
+    data.append("youtube_url", flowState.youtubeUrl);
     data.append("take_audio", takeFile);
 
+    activeSessionId = null;
+    flowState.analysisReady = false;
+    flowState.analysisFailed = false;
+    flowState.scoringRun = null;
+    flowState.questionFeedbackSent = false;
+    flowState.resultRendered = false;
+    flowState.questionAnswers = {};
+    flowState.questionsComplete = false;
+    resetQuestionInputs();
+    updateQuestionProgress();
+    showFlowPanel("processing");
+    startProcessingNarrative();
     setBusy(true);
-    setJobStatus("Uploading audio...", "working");
+    setJobStatus("Uploading audio and starting analysis...", "working");
     fetch(apiBaseUrl() + "/v1/scoring-jobs", {
       method: "POST",
       headers: { "X-Konopro-Beta-User": betaUserKey() },
@@ -468,11 +726,16 @@
       .then(function (payload) {
         activeSessionId = payload.session.id;
         setJobStatus(statusText(payload), "working");
+        submitWorkflowFeedback();
         pollScoringJob(payload.job.id);
       })
       .catch(function (error) {
         setBusy(false);
         setJobStatus(error.message, "error");
+        elements.processingHint.textContent = "The backend could not start analysis. Check the URL, backend status, and upload format.";
+        failProcessingNarrative("The backend could not start analysis. Check the URL, backend status, and upload format.");
+        flowState.analysisFailed = true;
+        tryUnlockResult();
       });
   }
 
@@ -488,8 +751,12 @@
           if (payload.job.status === "completed" || payload.scoring_run.status === "completed") {
             clearPollTimer();
             setBusy(false);
-            setJobStatus("Analysis completed.", "good");
-            renderResult(payload.scoring_run);
+            setJobStatus("Analysis is ready.", "good");
+            flowState.analysisReady = true;
+            flowState.scoringRun = payload.scoring_run;
+            elements.processingHint.textContent = "Analysis finished. Complete the quick questions to unlock the result.";
+            completeProcessingNarrative();
+            tryUnlockResult();
             return;
           }
           if (payload.job.status === "failed" || payload.scoring_run.status === "failed") {
@@ -499,6 +766,10 @@
               payload.scoring_run.error_message || payload.job.error_message || "Analysis failed.",
               "error"
             );
+            elements.processingHint.textContent = "Analysis failed before a score could be generated.";
+            failProcessingNarrative(payload.scoring_run.error_message || payload.job.error_message || "Analysis failed before a score could be generated.");
+            flowState.analysisFailed = true;
+            tryUnlockResult();
             return;
           }
           setJobStatus(statusText(payload), "working");
@@ -507,27 +778,68 @@
           clearPollTimer();
           setBusy(false);
           setJobStatus(error.message, "error");
+          elements.processingHint.textContent = "Polling failed. Check whether the backend is still running.";
+          failProcessingNarrative("Polling failed. Check whether the backend is still running.");
+          flowState.analysisFailed = true;
+          tryUnlockResult();
         });
     }, 2200);
   }
 
-  function submitFeedback(event) {
-    event.preventDefault();
-    if (!activeSessionId) {
-      elements.feedbackStatus.textContent = "분석 결과가 먼저 필요합니다.";
+  function updateQuestionProgress() {
+    flowState.questionAnswers = collectQuestionAnswers();
+    var answered = Object.keys(flowState.questionAnswers).length;
+    flowState.questionsComplete = answered === questionNames.length;
+    if (elements.questionProgress) {
+      elements.questionProgress.textContent = answered + " of " + questionNames.length + " answered";
+    }
+    storeWorkflowAnswers();
+    submitWorkflowFeedback();
+    tryUnlockResult();
+  }
+
+  function collectQuestionAnswers() {
+    var answers = {};
+    questionNames.forEach(function (name) {
+      var checked = elements.workflowQuestionForm && elements.workflowQuestionForm.querySelector(
+        'input[name="' + name + '"]:checked'
+      );
+      if (checked) {
+        answers[name] = checked.value;
+      }
+    });
+    return answers;
+  }
+
+  function storeWorkflowAnswers() {
+    try {
+      localStorage.setItem(storageKeys.workflowAnswers, JSON.stringify({
+        created_at: new Date().toISOString(),
+        tester_id: betaUserKey(),
+        youtube_url: flowState.youtubeUrl,
+        answers: flowState.questionAnswers
+      }));
+    } catch (_error) {
+      // Local feedback capture is best-effort; backend scoring should not depend on it.
+    }
+  }
+
+  function submitWorkflowFeedback() {
+    if (!activeSessionId || !flowState.questionsComplete || flowState.questionFeedbackSent) {
       return;
     }
 
-    var formData = new FormData(elements.feedbackForm);
+    flowState.questionFeedbackSent = true;
+    var answerText = questionNames.map(function (name) {
+      return name + "=" + (flowState.questionAnswers[name] || "");
+    }).join(" | ");
     var payload = {
-      helped_review: formData.get("helpedReview"),
-      rating: Number(elements.feedbackRating.value),
-      answer_text: elements.feedbackAnswer.value.trim() || null,
-      context: "web_mvp_scoring_result"
+      helped_review: "not_sure",
+      rating: 3,
+      answer_text: answerText.slice(0, 500),
+      context: "web_mvp_processing_questions"
     };
 
-    elements.feedbackButton.disabled = true;
-    elements.feedbackStatus.textContent = "Saving feedback...";
     fetch(apiBaseUrl() + "/v1/sessions/" + activeSessionId + "/feedback", {
       method: "POST",
       headers: {
@@ -537,16 +849,47 @@
       body: JSON.stringify(payload)
     })
       .then(parseResponse)
-      .then(function () {
-        elements.feedbackStatus.textContent = "Feedback saved.";
-      })
-      .catch(function (error) {
-        elements.feedbackButton.disabled = false;
-        elements.feedbackStatus.textContent = error.message;
+      .catch(function () {
+        flowState.questionFeedbackSent = false;
       });
   }
 
+  function tryUnlockResult() {
+    if (!elements.resultGate) {
+      return;
+    }
+    if (flowState.analysisFailed) {
+      elements.resultGate.classList.add("is-hidden");
+      return;
+    }
+    if (flowState.analysisReady && !flowState.questionsComplete) {
+      elements.resultGate.classList.remove("is-hidden");
+      elements.resultGate.textContent = "Analysis is ready. Finish the quick questions to unlock your result.";
+      return;
+    }
+    if (!flowState.analysisReady && flowState.questionsComplete) {
+      elements.resultGate.classList.remove("is-hidden");
+      elements.resultGate.textContent = "Questions complete. Your result will unlock as soon as analysis finishes.";
+      return;
+    }
+    if (!flowState.analysisReady || !flowState.questionsComplete || !flowState.scoringRun) {
+      elements.resultGate.classList.add("is-hidden");
+      return;
+    }
+    if (flowState.resultRendered) {
+      elements.resultGate.classList.add("is-hidden");
+      return;
+    }
+
+    elements.resultGate.classList.add("is-hidden");
+    showFlowPanel("processing");
+    flowState.resultRendered = true;
+    renderResult(flowState.scoringRun);
+    submitWorkflowFeedback();
+  }
+
   function renderResult(scoringRun) {
+    var takeFile = elements.takeAudio.files && elements.takeAudio.files[0];
     var scores = scoringRun.scores || {};
     var metrics = [
       ["Overall", scores.overall_score, "전체 가중 점수"],
@@ -558,12 +901,24 @@
     ];
 
     elements.overallScore.textContent = numericScore(scores.overall_score);
+    if (takeFile) {
+      elements.resultTakeFileName.textContent = takeFile.name;
+      elements.resultTakeMeta.textContent = formatBytes(takeFile.size);
+      elements.resultTakeAudioPlayer.src = audioPreviewUrls.take || "";
+      elements.resultTakeAudioPlayer.load();
+    }
+    if (flowState.youtubeVideoId) {
+      elements.resultYoutubeEmbed.src = youtubeEmbedUrl(flowState.youtubeVideoId);
+      elements.resultYoutubeLink.href = flowState.youtubeUrl;
+      elements.resultYoutubeLink.textContent = flowState.youtubeUrl;
+    }
     elements.metricGrid.innerHTML = metrics.map(metricCard).join("");
     renderList(elements.feedbackList, scoringRun.feedback || []);
     renderWarnings(scoringRun.warnings || []);
     elements.emptyResult.classList.add("is-hidden");
     elements.resultLayout.classList.remove("is-hidden");
-    elements.feedbackButton.disabled = false;
+    elements.processingHint.textContent = "Result unlocked.";
+    elements.result.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function metricCard(metric) {
@@ -595,9 +950,39 @@
     }).join("");
   }
 
+  function showFlowPanel(panelName) {
+    toggleHidden(elements.uploadStage, panelName !== "upload");
+    toggleHidden(elements.confirmStage, panelName !== "confirm");
+    toggleHidden(elements.processingStage, panelName !== "processing");
+
+    setFlowStep(elements.flowStepUpload, panelName === "upload", panelName === "confirm" || panelName === "processing");
+    setFlowStep(elements.flowStepReference, panelName === "confirm", panelName === "processing");
+    setFlowStep(elements.flowStepAnalyze, panelName === "processing", flowState.analysisReady && flowState.questionsComplete);
+  }
+
+  function setFlowStep(step, isActive, isDone) {
+    if (!step) {
+      return;
+    }
+    step.classList.toggle("is-active", isActive);
+    step.classList.toggle("is-done", isDone);
+  }
+
+  function toggleHidden(node, hidden) {
+    if (node) {
+      node.classList.toggle("is-hidden", hidden);
+    }
+  }
+
   function setBusy(isBusy) {
     elements.submitButton.disabled = isBusy;
     elements.clearButton.disabled = isBusy;
+    if (elements.confirmAnalyzeButton) {
+      elements.confirmAnalyzeButton.disabled = isBusy;
+    }
+    if (elements.changeYoutubeButton) {
+      elements.changeYoutubeButton.disabled = isBusy;
+    }
   }
 
   function setHealth(message, state) {
@@ -624,16 +1009,26 @@
 
   function resetScoringUi() {
     clearPollTimer();
+    clearProcessingStageTimer();
     setBusy(false);
     elements.analysisForm.reset();
     elements.apiBaseUrl.value = localStorage.getItem(storageKeys.apiBaseUrl) || "http://127.0.0.1:8000";
     elements.betaUserKey.value = localStorage.getItem(storageKeys.betaUserKey) || defaultTesterId();
+    elements.youtubeUrl.value = "";
+    if (elements.youtubeModalUrl) {
+      elements.youtubeModalUrl.value = "";
+    }
     resetAudioPickers();
+    resetQuestionInputs();
+    closeYoutubeModal();
+    flowState = createInitialFlowState();
     activeSessionId = null;
     resetResult();
+    showFlowPanel("upload");
+    updateQuestionProgress();
+    setProcessingStage(0, "idle");
     setJobStatus("대기 중", "idle");
-    elements.feedbackButton.disabled = true;
-    elements.feedbackStatus.textContent = "";
+    elements.processingHint.textContent = "The backend is fetching the original song and comparing it against your recording.";
   }
 
   function resetResult() {
@@ -644,6 +1039,24 @@
     elements.warningBox.classList.add("is-hidden");
     elements.resultLayout.classList.add("is-hidden");
     elements.emptyResult.classList.remove("is-hidden");
+    elements.resultTakeFileName.textContent = "Cover recording";
+    elements.resultTakeMeta.textContent = "Selected audio appears here.";
+    elements.resultTakeAudioPlayer.removeAttribute("src");
+    elements.resultTakeAudioPlayer.load();
+    elements.resultYoutubeEmbed.removeAttribute("src");
+    elements.resultYoutubeLink.href = "#";
+    elements.resultYoutubeLink.textContent = "Open YouTube";
+  }
+
+  function resetQuestionInputs() {
+    if (!elements.workflowQuestionForm) {
+      return;
+    }
+    elements.workflowQuestionForm.querySelectorAll("input[type='radio']").forEach(function (input) {
+      input.checked = false;
+    });
+    elements.resultGate.classList.add("is-hidden");
+    elements.questionProgress.textContent = "0 of " + questionNames.length + " answered";
   }
 
   function clearPollTimer() {
@@ -651,6 +1064,34 @@
       window.clearInterval(pollTimer);
       pollTimer = null;
     }
+  }
+
+  function extractYoutubeVideoId(rawUrl) {
+    if (!rawUrl) {
+      return "";
+    }
+    try {
+      var url = new URL(rawUrl);
+      var host = url.hostname.replace(/^www\./, "").replace(/^m\./, "");
+      var segments = url.pathname.split("/").filter(Boolean);
+      var videoId = "";
+      if (host === "youtu.be") {
+        videoId = segments[0] || "";
+      } else if (host === "youtube.com" || host === "music.youtube.com") {
+        if (url.pathname === "/watch") {
+          videoId = url.searchParams.get("v") || "";
+        } else if (segments[0] === "embed" || segments[0] === "shorts" || segments[0] === "live") {
+          videoId = segments[1] || "";
+        }
+      }
+      return /^[A-Za-z0-9_-]{6,}$/.test(videoId) ? videoId : "";
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function youtubeEmbedUrl(videoId) {
+    return "https://www.youtube.com/embed/" + encodeURIComponent(videoId);
   }
 
   function parseResponse(response) {
