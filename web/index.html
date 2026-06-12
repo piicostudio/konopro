@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="KonoPro local MVP scoring demo">
+  <title>KonoPro | 보컬 성장 분석</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="templatemo-frost-style.css">
+</head>
+<body>
+  <a class="skip-link" href="#analyze">분석 폼으로 이동</a>
+
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="KonoPro home">KONO<span>PRO</span></a>
+    <nav class="nav" aria-label="Main navigation">
+      <a href="#analyze">Analyze</a>
+      <a href="#result">Result</a>
+      <a href="#feedback">Feedback</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <img
+        class="hero__image"
+        src="images/music-technology-guitar-microphone-studio-amplifier-846852-pxhere.com.jpg"
+        alt=""
+        aria-hidden="true"
+      >
+      <div class="hero__shade"></div>
+      <div class="hero__content">
+        <p class="eyebrow">Local MVP Scoring Demo</p>
+        <h1>방금 부른 노래, 원곡과 비교해 바로 점수화합니다.</h1>
+        <p class="hero__copy">
+          유튜브 원곡 URL과 내 녹음을 올리면 피치, 타이밍, 안정성, 커버리지 기준으로 연습 피드백을 반환합니다.
+        </p>
+        <div class="hero__actions">
+          <a class="button button--primary" href="#analyze">분석 시작</a>
+          <button class="button button--ghost" type="button" id="healthCheckButton">Backend 확인</button>
+        </div>
+        <p class="health-status" id="healthStatus" role="status" aria-live="polite">Backend: not checked</p>
+      </div>
+    </section>
+
+    <section class="section section--split" aria-labelledby="promiseTitle">
+      <div>
+        <p class="eyebrow">Promise</p>
+        <h2 id="promiseTitle">“노래를 더 잘하게”의 첫 MVP는 측정 가능한 복기입니다.</h2>
+      </div>
+      <div class="promise-grid">
+        <article class="mini-card">
+          <span class="mini-card__label">Pitch</span>
+          <strong>원곡 대비 음정 오차</strong>
+        </article>
+        <article class="mini-card">
+          <span class="mini-card__label">Timing</span>
+          <strong>시작점과 프레이즈 정렬</strong>
+        </article>
+        <article class="mini-card">
+          <span class="mini-card__label">Control</span>
+          <strong>흔들림과 녹음 신뢰도</strong>
+        </article>
+      </div>
+    </section>
+
+    <section class="console-band" id="analyze" aria-labelledby="analyzeTitle">
+      <div class="console">
+        <div class="console__header">
+          <div>
+            <p class="eyebrow">Scoring Console</p>
+            <h2 id="analyzeTitle">Upload a karaoke take</h2>
+          </div>
+          <div class="runtime-pill" id="runtimePill">Local backend</div>
+        </div>
+
+        <form class="analysis-form" id="analysisForm">
+          <div class="field-grid">
+            <label class="field">
+              <span>Backend URL</span>
+              <input id="apiBaseUrl" name="apiBaseUrl" type="url" value="http://127.0.0.1:8000" autocomplete="url">
+            </label>
+
+            <label class="field">
+              <span>Tester ID</span>
+              <input id="betaUserKey" name="betaUserKey" type="text" autocomplete="email" required>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>YouTube URL</span>
+            <input id="youtubeUrl" name="youtubeUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." required>
+          </label>
+
+          <div class="upload-grid">
+            <label class="upload-box">
+              <span class="upload-box__title">내 노래 녹음</span>
+              <span class="upload-box__meta" id="takeFileMeta">WAV, MP3, M4A, AAC, OGG, FLAC</span>
+              <input id="takeAudio" name="takeAudio" type="file" accept="audio/*" required>
+            </label>
+
+            <label class="upload-box upload-box--optional">
+              <span class="upload-box__title">원곡 파일 fallback</span>
+              <span class="upload-box__meta" id="referenceFileMeta">YouTube가 실패할 때 사용</span>
+              <input id="referenceAudio" name="referenceAudio" type="file" accept="audio/*">
+            </label>
+          </div>
+
+          <div class="form-actions">
+            <button class="button button--primary" type="submit" id="submitButton">분석 요청</button>
+            <button class="button button--ghost" type="button" id="clearButton">초기화</button>
+          </div>
+        </form>
+
+        <div class="job-status" id="jobStatus" role="status" aria-live="polite">
+          <span class="status-dot"></span>
+          <span id="jobStatusText">대기 중</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section result-section" id="result" aria-labelledby="resultTitle">
+      <div class="result-header">
+        <div>
+          <p class="eyebrow">Result</p>
+          <h2 id="resultTitle">Analysis output</h2>
+        </div>
+        <div class="result-score" id="overallScore">--</div>
+      </div>
+
+      <div class="empty-result" id="emptyResult">
+        분석 결과가 여기에 표시됩니다.
+      </div>
+
+      <div class="result-layout is-hidden" id="resultLayout">
+        <div class="metric-grid" id="metricGrid"></div>
+        <div class="feedback-panel">
+          <h3>Practice feedback</h3>
+          <ul id="feedbackList"></ul>
+          <div class="warning-box is-hidden" id="warningBox">
+            <h3>Warnings</h3>
+            <ul id="warningList"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="feedback-band" id="feedback" aria-labelledby="feedbackTitle">
+      <div class="feedback-copy">
+        <p class="eyebrow">Tester Feedback</p>
+        <h2 id="feedbackTitle">이 결과가 연습 복기에 도움이 되었나요?</h2>
+      </div>
+
+      <form class="feedback-form" id="feedbackForm">
+        <fieldset class="segmented">
+          <legend>도움 여부</legend>
+          <label><input type="radio" name="helpedReview" value="yes" checked><span>Yes</span></label>
+          <label><input type="radio" name="helpedReview" value="not_sure"><span>Not sure</span></label>
+          <label><input type="radio" name="helpedReview" value="no"><span>No</span></label>
+        </fieldset>
+
+        <label class="field">
+          <span>Rating</span>
+          <input id="feedbackRating" name="feedbackRating" type="range" min="1" max="5" value="4">
+        </label>
+
+        <label class="field">
+          <span>Short answer</span>
+          <textarea id="feedbackAnswer" name="feedbackAnswer" rows="3" maxlength="500" placeholder="어떤 점이 도움이 됐거나 부족했나요?"></textarea>
+        </label>
+
+        <button class="button button--primary" type="submit" id="feedbackButton" disabled>피드백 저장</button>
+        <p class="feedback-status" id="feedbackStatus" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+
+  <script src="templatemo-frost-script.js"></script>
+</body>
+</html>

@@ -27,6 +27,16 @@ class BackendSettings(BaseSettings):
     free_report_turnaround_hours: int = 72
     paid_report_turnaround_hours: int = 24
     manual_comp_report_turnaround_hours: int = 48
+    cors_allow_origins: str = (
+        "http://127.0.0.1:5173,"
+        "http://localhost:5173,"
+        "http://127.0.0.1:5500,"
+        "http://localhost:5500,"
+        "http://127.0.0.1:8000,"
+        "http://localhost:8000"
+    )
+    reference_download_tool: str = "yt-dlp"
+    reference_fetch_timeout_s: float = 180.0
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -41,3 +51,7 @@ class BackendSettings(BaseSettings):
     @property
     def processing_path(self) -> Path:
         return self.processing_root.expanduser().resolve()
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_allow_origins.split(",") if origin.strip()]

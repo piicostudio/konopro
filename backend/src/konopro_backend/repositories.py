@@ -15,6 +15,7 @@ from konopro_backend.models import (
     FingerprintWindowRecord,
     JobStatus,
     ProcessingJob,
+    ReferenceScoringRun,
     ReportArtifact,
     ReportArtifactVisibility,
     ReportEvent,
@@ -35,6 +36,7 @@ TERMINAL_REPORT_STATUSES = {
     ReportRequestStatus.cancelled,
     ReportRequestStatus.unable_to_complete,
 }
+_UNSET = object()
 REPORT_PRIORITY_ORDER = {
     ReportPriority.high: 0,
     ReportPriority.normal: 1,
@@ -288,6 +290,107 @@ def update_job_status(
         db.add(audio_session)
 
     return _commit_refresh(db, job)
+
+
+def create_reference_scoring_run(
+    db: Session,
+    *,
+    user_id: str,
+    session_id: str,
+    job_id: str,
+    youtube_url: str,
+    reference_source: str,
+    reference_storage_key: str | None = None,
+    reference_original_filename: str | None = None,
+    reference_content_type: str | None = None,
+) -> ReferenceScoringRun:
+    scoring_run = ReferenceScoringRun(
+        user_id=user_id,
+        session_id=session_id,
+        job_id=job_id,
+        youtube_url=youtube_url,
+        reference_source=reference_source,
+        reference_storage_key=reference_storage_key,
+        reference_original_filename=reference_original_filename,
+        reference_content_type=reference_content_type,
+    )
+    return _commit_refresh(db, scoring_run)
+
+
+def get_reference_scoring_run(
+    db: Session,
+    scoring_run_id: str,
+    *,
+    user_id: str | None = None,
+) -> ReferenceScoringRun | None:
+    query = select(ReferenceScoringRun).where(ReferenceScoringRun.id == scoring_run_id)
+    if user_id is not None:
+        query = query.where(ReferenceScoringRun.user_id == user_id)
+    return db.exec(query).first()
+
+
+def get_reference_scoring_run_by_job(
+    db: Session,
+    job_id: str,
+    *,
+    user_id: str | None = None,
+) -> ReferenceScoringRun | None:
+    query = select(ReferenceScoringRun).where(ReferenceScoringRun.job_id == job_id)
+    if user_id is not None:
+        query = query.where(ReferenceScoringRun.user_id == user_id)
+    return db.exec(query).first()
+
+
+def update_reference_scoring_run(
+    db: Session,
+    scoring_run_id: str,
+    *,
+    status: str,
+    scores: dict[str, Any] | None | object = _UNSET,
+    reference_summary: dict[str, Any] | None | object = _UNSET,
+    feedback: list[str] | None | object = _UNSET,
+    warnings: list[str] | None | object = _UNSET,
+    error_message: str | None | object = _UNSET,
+) -> ReferenceScoringRun:
+    scoring_run = db.get(ReferenceScoringRun, scoring_run_id)
+    if scoring_run is None:
+        raise ValueError(f"Reference scoring run not found: {scoring_run_id}")
+
+    scoring_run.status = status
+    scoring_run.updated_at = utc_now()
+    if scores is not _UNSET:
+        scoring_run.scores_json = _json_dumps(scores, {})
+    if reference_summary is not _UNSET:
+        scoring_run.reference_summary_json = _json_dumps(reference_summary, {})
+    if feedback is not _UNSET:
+        scoring_run.feedback_json = _json_dumps(feedback, [])
+    if warnings is not _UNSET:
+        scoring_run.warnings_json = _json_dumps(warnings, [])
+    if error_message is not _UNSET:
+        scoring_run.error_message = error_message if isinstance(error_message, str) else None
+
+    return _commit_refresh(db, scoring_run)
+
+
+def reference_scoring_run_payload(run: ReferenceScoringRun) -> dict[str, Any]:
+    return {
+        "id": run.id,
+        "user_id": run.user_id,
+        "session_id": run.session_id,
+        "job_id": run.job_id,
+        "youtube_url": run.youtube_url,
+        "reference_source": run.reference_source,
+        "reference_original_filename": run.reference_original_filename,
+        "reference_content_type": run.reference_content_type,
+        "status": run.status,
+        "scores": _json_loads(run.scores_json, {}),
+        "reference_summary": _json_loads(run.reference_summary_json, {}),
+        "feedback": _json_loads(run.feedback_json, []),
+        "warnings": _json_loads(run.warnings_json, []),
+        "error_message": run.error_message,
+        "created_at": run.created_at,
+        "updated_at": run.updated_at,
+    }
 
 
 def replace_session_analysis(

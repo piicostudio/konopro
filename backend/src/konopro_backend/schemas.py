@@ -57,6 +57,31 @@ class UploadSessionResponse(BaseModel):
     job: ProcessingJobResponse
 
 
+class ReferenceScoringRunResponse(BaseModel):
+    id: str
+    user_id: str
+    session_id: str
+    job_id: str
+    youtube_url: str
+    reference_source: str
+    reference_original_filename: str | None
+    reference_content_type: str | None
+    status: str
+    scores: dict[str, Any]
+    reference_summary: dict[str, Any]
+    feedback: list[str]
+    warnings: list[str]
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScoringJobResponse(BaseModel):
+    session: AudioSessionResponse
+    job: ProcessingJobResponse
+    scoring_run: ReferenceScoringRunResponse
+
+
 class FingerprintWindowResponse(BaseModel):
     window_index: int
     provider: str

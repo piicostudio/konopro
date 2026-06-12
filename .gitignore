@@ -1,5 +1,8 @@
 # standard gitignore files
 .DS_Store
+.env
+.env.*
+!.env.example
 .venv/
 __pycache__/
 *.py[cod]
@@ -8,9 +11,22 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .ipynb_checkpoints/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Node/web frontend local artifacts.
+node_modules/
+dist/
+.vercel/
 
 # Local Python environments created inside the research prototype.
 research/.venv/
+
+# Local backend state.
+.local/
+backend/.local/
 
 # Generated demo artifacts. These can be recreated with:
 # cd research && uv run python scripts/generate_demo_data.py
@@ -36,3 +52,8 @@ research/.cache/
 .planning/
 .superpowers/
 documentation/
+
+# Parked native iOS prototype lives outside the current Flutter/web MVP.
+/ios/
+xcuserdata/
+*.xcuserstate

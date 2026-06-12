@@ -5,7 +5,7 @@ from sqlmodel import Session
 from konopro_backend.config import BackendSettings
 from konopro_backend.db import create_db_and_tables, create_engine_from_settings
 from konopro_backend.models import AudioSession, JobStatus, ProcessingJob
-from konopro_backend.processing import FingerprintSegmentationProcessor
+from konopro_backend.processing import FingerprintSegmentationProcessor, ReferenceScoringProcessor
 from konopro_backend.repositories import get_audio_session, get_next_queued_job, update_job_status
 
 JobProcessor = Callable[[ProcessingJob, AudioSession], None]
@@ -15,6 +15,9 @@ def default_processor(settings: BackendSettings) -> JobProcessor:
     def process(job: ProcessingJob, audio_session: AudioSession) -> None:
         if job.job_type == "fingerprint_segmentation":
             FingerprintSegmentationProcessor(settings).process(job, audio_session)
+            return
+        if job.job_type == "reference_scoring":
+            ReferenceScoringProcessor(settings).process(job, audio_session)
             return
         raise ValueError(f"Unsupported job type: {job.job_type}")
 

@@ -211,6 +211,28 @@ class FingerprintDiagnosticRecord(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class ReferenceScoringRun(SQLModel, table=True):
+    __tablename__ = "reference_scoring_runs"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    user_id: str = Field(foreign_key="beta_users.id", index=True)
+    session_id: str = Field(foreign_key="audio_sessions.id", index=True)
+    job_id: str = Field(foreign_key="processing_jobs.id", index=True, unique=True)
+    youtube_url: str = Field(index=True)
+    reference_source: str = Field(default="youtube", index=True)
+    reference_storage_key: str | None = Field(default=None, index=True)
+    reference_original_filename: str | None = None
+    reference_content_type: str | None = None
+    status: str = Field(default="queued", index=True)
+    scores_json: str = "{}"
+    reference_summary_json: str = "{}"
+    feedback_json: str = "[]"
+    warnings_json: str = "[]"
+    error_message: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class SessionFeedback(SQLModel, table=True):
     __tablename__ = "session_feedback"
 
