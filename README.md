@@ -8,7 +8,7 @@ Week 0: Brainstorm required features, research how they can be implemented
 Week 1: Validate feasibility of prototype 
 Week 2: Algorithm-side: Improve scoring, alignment, and feedback, App-side: Create design for app
 Week 3: Build the MVP
-Week 4: Make the prototype easy to run, easy to inspect, and safe to demo. Prepare for final presentations.
+Week 4: Test the MVP. Prepare for final presentations.
 ```
 
 ## Repository Layout
