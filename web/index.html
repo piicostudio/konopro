@@ -35,6 +35,10 @@
     </div>
   </button>
 
+  <button class="settings-button" id="settingsButton" type="button" aria-label="Demo settings" aria-haspopup="dialog" aria-expanded="false">
+    <span aria-hidden="true">&#9881;</span>
+  </button>
+
   <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
   <aside class="sidebar" id="sidebar" role="navigation" aria-label="Main navigation">
@@ -179,26 +183,11 @@
           <div class="analysis-console__top">
             <div>
               <h3 class="analysis-console__title">Scoring Console</h3>
-              <p class="analysis-console__text">먼저 로컬 백엔드를 켠 뒤, 녹음 파일을 업로드하세요.</p>
+              <p class="analysis-console__text">녹음 파일을 업로드한 뒤 원곡 유튜브 링크를 확인하고 분석을 시작하세요.</p>
             </div>
-            <button class="btn btn--outline" type="button" id="healthCheckButton">Backend 확인</button>
           </div>
 
-          <p class="health-status" id="healthStatus" role="status" aria-live="polite">Backend: not checked</p>
-
           <form class="analysis-form fake-door-form" id="analysisForm" novalidate>
-            <div class="analysis-form__grid analysis-settings">
-              <div class="fake-door-form__field">
-                <label for="apiBaseUrl">Backend URL</label>
-                <input id="apiBaseUrl" name="apiBaseUrl" type="url" value="http://127.0.0.1:8000" autocomplete="url">
-              </div>
-
-              <div class="fake-door-form__field">
-                <label for="betaUserKey">Tester ID</label>
-                <input id="betaUserKey" name="betaUserKey" type="text" autocomplete="email" required>
-              </div>
-            </div>
-
             <div class="flow-rail" aria-label="Analysis steps">
               <span class="flow-step is-active" id="flowStepUpload">1. Upload</span>
               <span class="flow-step" id="flowStepReference">2. Match original</span>
@@ -400,6 +389,33 @@
     </footer>
 
   </main>
+
+  <div class="reveal-modal settings-modal" id="settingsModal" aria-hidden="true">
+    <div class="reveal-modal__overlay" data-close-settings-modal></div>
+    <div class="reveal-modal__content settings-modal__content" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <button type="button" class="reveal-modal__close" aria-label="닫기" data-close-settings-modal>&times;</button>
+      <span class="section__label">Demo Settings</span>
+      <h2 class="reveal-modal__title" id="settingsTitle">분석 데모 설정</h2>
+      <p class="reveal-modal__message">로컬 베타 테스트용 연결 정보입니다. 일반 방문자는 변경하지 않아도 됩니다.</p>
+
+      <div class="settings-modal__status">
+        <p class="health-status" id="healthStatus" role="status" aria-live="polite">Backend: not checked</p>
+        <button class="btn btn--outline" type="button" id="healthCheckButton">Backend 확인</button>
+      </div>
+
+      <div class="fake-door-form settings-form">
+        <div class="fake-door-form__field">
+          <label for="apiBaseUrl">Backend URL</label>
+          <input id="apiBaseUrl" name="apiBaseUrl" type="url" value="http://127.0.0.1:8000" autocomplete="url">
+        </div>
+
+        <div class="fake-door-form__field">
+          <label for="betaUserKey">Tester ID</label>
+          <input id="betaUserKey" name="betaUserKey" type="text" autocomplete="email" required>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div class="reveal-modal" id="revealModal" aria-hidden="true">
     <div class="reveal-modal__overlay" data-close-modal></div>

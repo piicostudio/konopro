@@ -54,6 +54,8 @@
       hamburger: document.getElementById("hamburger"),
       sidebar: document.getElementById("sidebar"),
       sidebarOverlay: document.getElementById("sidebarOverlay"),
+      settingsButton: document.getElementById("settingsButton"),
+      settingsModal: document.getElementById("settingsModal"),
       modal: document.getElementById("revealModal"),
       waitlistForm: document.getElementById("waitlistForm"),
       formFeedback: document.getElementById("formFeedback"),
@@ -129,6 +131,7 @@
     initSidebar();
     initRevealAnimations();
     initBuilderPreview();
+    initSettingsModal();
     initModal();
     initWaitlistForm();
     initActiveNav();
@@ -211,6 +214,44 @@
       step.addEventListener("click", function () {
         activate(step.getAttribute("data-preview"));
       });
+    });
+  }
+
+  function initSettingsModal() {
+    if (!elements.settingsButton || !elements.settingsModal) {
+      return;
+    }
+
+    var closers = elements.settingsModal.querySelectorAll("[data-close-settings-modal]");
+
+    function open() {
+      elements.settingsModal.classList.add("is-open");
+      elements.settingsModal.setAttribute("aria-hidden", "false");
+      elements.settingsButton.setAttribute("aria-expanded", "true");
+      document.body.style.overflow = "hidden";
+      if (elements.apiBaseUrl) {
+        setTimeout(function () {
+          elements.apiBaseUrl.focus();
+        }, 120);
+      }
+    }
+
+    function close() {
+      persistSettings();
+      elements.settingsModal.classList.remove("is-open");
+      elements.settingsModal.setAttribute("aria-hidden", "true");
+      elements.settingsButton.setAttribute("aria-expanded", "false");
+      document.body.style.overflow = "";
+    }
+
+    elements.settingsButton.addEventListener("click", open);
+    closers.forEach(function (closer) {
+      closer.addEventListener("click", close);
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && elements.settingsModal.classList.contains("is-open")) {
+        close();
+      }
     });
   }
 
