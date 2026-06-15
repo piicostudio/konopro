@@ -77,11 +77,14 @@ STEM_CACHE_DIR = RESEARCH_ROOT / ".cache" / "stems"
 OUTPUT_DIR = RESEARCH_ROOT / ".cache" / "gradio_outputs"
 DEREVERB_CACHE_DIR = RESEARCH_ROOT / ".cache" / "dereverb"
 PITCH_CONTOUR_CACHE_DIR = RESEARCH_ROOT / ".cache" / "pitch_contours"
+ACTIVE_RMS_CACHE_DIR = RESEARCH_ROOT / ".cache" / "active_rms"
 PITCH_CONTOUR_CACHE_VERSION = 1
+ACTIVE_RMS_CACHE_VERSION = 1
 MAX_REQUEST_WINDOW_PREVIEWS = 40
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 DEREVERB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 PITCH_CONTOUR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+ACTIVE_RMS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 PITCH_KWARGS = {
@@ -244,6 +247,184 @@ def _prepare_slot(
             "cache_path": result.cache_path,
         },
     )
+
+
+def _apply_active_rms_to_slot(
+    analysis_path: str,
+    row: dict[str, Any],
+    *,
+    enabled: bool,
+    target_rms: float,
+    active_percentile: float,
+) -> tuple[str, dict[str, Any]]:
+    if not analysis_path or not enabled:
+        row = {**row}
+        row.update(
+            {
+                "active_rms_enabled": bool(enabled),
+                "active_rms_before": np.nan,
+                "active_rms_after": np.nan,
+                "active_rms_gain": np.nan,
+                "active_rms_status": "not applied" if not enabled else "missing file",
+            }
+        )
+        return analysis_path, row
+
+    started = time.perf_counter()
+    normalized_path, metrics = _active_rms_normalized_file(
+        analysis_path,
+        target_rms=target_rms,
+        active_percentile=active_percentile,
+    )
+    row = {**row}
+    row["analysis_file"] = Path(normalized_path).name
+    row["analysis_mode"] = f"{row.get('analysis_mode', 'analysis audio')} + active RMS"
+    row["timing_seconds"] = float(row.get("timing_seconds", 0.0) or 0.0) + (time.perf_counter() - started)
+    row["active_rms_enabled"] = True
+    row["active_rms_before"] = metrics["active_rms_before"]
+    row["active_rms_after"] = metrics["active_rms_after"]
+    row["active_rms_gain"] = metrics["gain"]
+    row["active_rms_status"] = metrics["status"]
+    row["active_rms_cache_key"] = metrics["cache_key"]
+    existing_notes = str(row.get("notes") or "")
+    rms_note = (
+        f"Active RMS {metrics['status']}: {metrics['active_rms_before']:.5f} -> "
+        f"{metrics['active_rms_after']:.5f}, gain {metrics['gain']:.2f}x"
+    )
+    row["notes"] = f"{existing_notes}\n{rms_note}" if existing_notes and existing_notes != "Ready" else rms_note
+    return normalized_path, row
+
+
+def _active_rms_normalized_file(
+    source_path: str,
+    *,
+    target_rms: float,
+    active_percentile: float,
+) -> tuple[str, dict[str, Any]]:
+    cache_path, cache_key = _active_rms_cache_path(
+        source_path,
+        target_rms=target_rms,
+        active_percentile=active_percentile,
+    )
+    metadata_path = cache_path.with_suffix(".json")
+    if cache_path.exists() and metadata_path.exists():
+        try:
+            metrics = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metrics["status"] = "cache hit"
+            return str(cache_path), metrics
+        except Exception:
+            pass
+
+    audio, sample_rate = load_audio(source_path)
+    normalized, metrics = _normalize_active_rms(
+        audio,
+        sample_rate=sample_rate,
+        target_rms=target_rms,
+        active_percentile=active_percentile,
+    )
+    write_wav(cache_path, normalized, sample_rate)
+    metrics = {
+        **metrics,
+        "cache_key": cache_key,
+        "source_path": str(source_path),
+        "target_rms": float(target_rms),
+        "active_percentile": float(active_percentile),
+        "status": "computed",
+    }
+    metadata_path.write_text(json.dumps(metrics, indent=2, sort_keys=True), encoding="utf-8")
+    return str(cache_path), metrics
+
+
+def _active_rms_cache_path(
+    source_path: str,
+    *,
+    target_rms: float,
+    active_percentile: float,
+) -> tuple[Path, str]:
+    payload = {
+        "version": ACTIVE_RMS_CACHE_VERSION,
+        "source_hash": _sha256_file(source_path),
+        "target_rms": round(float(target_rms), 5),
+        "active_percentile": round(float(active_percentile), 3),
+    }
+    encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
+    cache_key = hashlib.sha256(encoded).hexdigest()[:24]
+    return ACTIVE_RMS_CACHE_DIR / f"{cache_key}.wav", cache_key
+
+
+def _normalize_active_rms(
+    audio: np.ndarray,
+    *,
+    sample_rate: int,
+    target_rms: float,
+    active_percentile: float,
+) -> tuple[np.ndarray, dict[str, float]]:
+    source = np.nan_to_num(np.asarray(audio, dtype=np.float32))
+    if source.size == 0:
+        return source, {
+            "active_rms_before": 0.0,
+            "active_rms_after": 0.0,
+            "gain": 1.0,
+            "active_threshold": 0.0,
+            "active_ratio": 0.0,
+            "peak_after": 0.0,
+        }
+
+    frame_length = min(max(256, int(round(0.05 * sample_rate))), max(1, source.size))
+    hop_length = max(1, frame_length // 2)
+    frame_rms = _frame_rms(source, frame_length=frame_length, hop_length=hop_length)
+    if frame_rms.size == 0:
+        before = _rms(source)
+        active_threshold = 0.0
+        active_ratio = 1.0
+    else:
+        percentile = float(np.clip(active_percentile, 0.0, 95.0))
+        active_threshold = float(np.percentile(frame_rms, percentile))
+        active_frames = frame_rms >= max(active_threshold, 1e-8)
+        if np.count_nonzero(active_frames) < max(1, int(0.05 * frame_rms.size)):
+            active_frames = frame_rms >= 1e-8
+        before = float(np.sqrt(np.mean(np.square(frame_rms[active_frames])))) if np.any(active_frames) else _rms(source)
+        active_ratio = float(np.mean(active_frames)) if frame_rms.size else 1.0
+
+    if before <= 1e-8:
+        gain = 1.0
+    else:
+        gain = float(target_rms) / before
+    normalized = source * gain
+    peak = float(np.max(np.abs(normalized))) if normalized.size else 0.0
+    if peak > 0.98:
+        normalized = normalized * (0.98 / peak)
+        gain *= 0.98 / peak
+        peak = 0.98
+    after = _rms(normalized[np.abs(normalized) >= 0]) if normalized.size else 0.0
+    after_active = before * gain
+    return normalized.astype(np.float32), {
+        "active_rms_before": round(float(before), 6),
+        "active_rms_after": round(float(after_active), 6),
+        "full_rms_after": round(float(after), 6),
+        "gain": round(float(gain), 4),
+        "active_threshold": round(float(active_threshold), 6),
+        "active_ratio": round(float(active_ratio), 4),
+        "peak_after": round(float(peak), 6),
+    }
+
+
+def _frame_rms(audio: np.ndarray, *, frame_length: int, hop_length: int) -> np.ndarray:
+    if audio.size == 0:
+        return np.asarray([], dtype=np.float32)
+    values: list[float] = []
+    for start in range(0, max(1, audio.size - frame_length + 1), hop_length):
+        frame = audio[start : start + frame_length]
+        if frame.size:
+            values.append(_rms(frame))
+    if not values:
+        values.append(_rms(audio))
+    return np.asarray(values, dtype=np.float32)
+
+
+def _rms(audio: np.ndarray) -> float:
+    values = np.asarray(audio, dtype=np.float32)
+    return float(np.sqrt(np.mean(np.square(values)))) if values.size else 0.0
 
 
 def _ready_status(prep_elapsed: float, use_demucs: bool, table: pd.DataFrame) -> str:
@@ -2341,6 +2522,9 @@ def prepare_audio(
     previous_take: str | None,
     use_demucs: bool,
     apply_to_takes: bool,
+    use_active_rms: bool,
+    target_active_rms: float,
+    active_rms_percentile: float,
     model: str,
     device: str,
     shifts: int,
@@ -2390,6 +2574,13 @@ def prepare_audio(
         shifts=shifts,
         overlap=overlap,
     )
+    reference_analysis, reference_row = _apply_active_rms_to_slot(
+        reference_analysis,
+        reference_row,
+        enabled=use_active_rms and bool(reference_analysis),
+        target_rms=target_active_rms,
+        active_percentile=active_rms_percentile,
+    )
     rows.append(reference_row)
 
     if progress is not None:
@@ -2402,6 +2593,13 @@ def prepare_audio(
         device=device,
         shifts=shifts,
         overlap=overlap,
+    )
+    current_analysis, current_row = _apply_active_rms_to_slot(
+        current_analysis,
+        current_row,
+        enabled=use_active_rms and bool(current_analysis),
+        target_rms=target_active_rms,
+        active_percentile=active_rms_percentile,
     )
     rows.append(current_row)
 
@@ -2416,6 +2614,13 @@ def prepare_audio(
         shifts=shifts,
         overlap=overlap,
     )
+    previous_analysis, previous_row = _apply_active_rms_to_slot(
+        previous_analysis,
+        previous_row,
+        enabled=use_active_rms and bool(previous_analysis),
+        target_rms=target_active_rms,
+        active_percentile=active_rms_percentile,
+    )
     rows.append(previous_row)
 
     elapsed = time.perf_counter() - start_time
@@ -2427,6 +2632,11 @@ def prepare_audio(
         "shifts": int(shifts),
         "overlap": float(overlap),
         "apply_to_takes": bool(apply_to_takes),
+        "active_rms": {
+            "enabled": bool(use_active_rms),
+            "target_rms": float(target_active_rms),
+            "active_percentile": float(active_rms_percentile),
+        },
     }
     state = {
         "reference_analysis": reference_analysis,
@@ -4005,7 +4215,7 @@ playback checkpoints for local research testing.
                     )
         
                 with gr.Accordion("Step 2 - Prepare Analysis Audio", open=True):
-                    use_demucs = gr.Checkbox(label="Use Demucs vocal stem", value=False)
+                    use_demucs = gr.Checkbox(label="Use Demucs vocal stem", value=True)
                     gr.Markdown("We currently support the **vocals** stem only. No other stems are used for scoring.")
                     gr.Radio(
                         ["vocals"],
@@ -4013,7 +4223,27 @@ playback checkpoints for local research testing.
                         label="Stem used for analysis",
                         interactive=False,
                     )
-                    apply_to_takes = gr.Checkbox(label="Apply Demucs to current/previous takes too", value=False)
+                    apply_to_takes = gr.Checkbox(label="Apply Demucs to current/previous takes too", value=True)
+                    with gr.Accordion("Loudness normalization", open=True):
+                        use_active_rms = gr.Checkbox(
+                            label="Normalize active RMS after Demucs",
+                            value=True,
+                        )
+                        with gr.Row():
+                            target_active_rms = gr.Slider(
+                                0.03,
+                                0.14,
+                                value=0.08,
+                                step=0.01,
+                                label="Target active RMS",
+                            )
+                            active_rms_percentile = gr.Slider(
+                                20,
+                                90,
+                                value=60,
+                                step=5,
+                                label="Active-frame percentile",
+                            )
                     with gr.Row():
                         model = gr.Dropdown(
                             ["htdemucs", "htdemucs_ft", "mdx_extra", "mdx_q"],
@@ -4073,6 +4303,9 @@ playback checkpoints for local research testing.
                             previous_take,
                             use_demucs,
                             apply_to_takes,
+                            use_active_rms,
+                            target_active_rms,
+                            active_rms_percentile,
                             model,
                             device,
                             shifts,
@@ -4728,8 +4961,28 @@ Compare original audio against prepared analysis audio. This tab reuses the same
         """
                         )
                         with gr.Row():
-                            lab_use_demucs = gr.Checkbox(label="Use Demucs vocal stem", value=False)
-                            lab_apply_to_takes = gr.Checkbox(label="Apply Demucs to current/previous takes", value=False)
+                            lab_use_demucs = gr.Checkbox(label="Use Demucs vocal stem", value=True)
+                            lab_apply_to_takes = gr.Checkbox(label="Apply Demucs to current/previous takes", value=True)
+                        with gr.Accordion("Loudness normalization", open=True):
+                            lab_use_active_rms = gr.Checkbox(
+                                label="Normalize active RMS after Demucs",
+                                value=True,
+                            )
+                            with gr.Row():
+                                lab_target_active_rms = gr.Slider(
+                                    0.03,
+                                    0.14,
+                                    value=0.08,
+                                    step=0.01,
+                                    label="Target active RMS",
+                                )
+                                lab_active_rms_percentile = gr.Slider(
+                                    20,
+                                    90,
+                                    value=60,
+                                    step=5,
+                                    label="Active-frame percentile",
+                                )
                         with gr.Row():
                             lab_model = gr.Dropdown(
                                 ["htdemucs", "htdemucs_ft", "mdx_extra", "mdx_q"],
@@ -4759,6 +5012,9 @@ Compare original audio against prepared analysis audio. This tab reuses the same
                                 previous_take,
                                 lab_use_demucs,
                                 lab_apply_to_takes,
+                                lab_use_active_rms,
+                                lab_target_active_rms,
+                                lab_active_rms_percentile,
                                 lab_model,
                                 lab_device,
                                 lab_shifts,
