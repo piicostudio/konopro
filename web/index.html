@@ -47,6 +47,7 @@
         <li><a href="#hero" class="active"><span class="nav-icon">&#9678;</span> KonoPro의 약속</a></li>
         <li><a href="#problem"><span class="nav-icon">&#9888;</span> 노래방의 문제점</a></li>
         <li><a href="#solution"><span class="nav-icon">&#9835;</span> 해결 방법</a></li>
+        <li><a href="#analyze"><span class="nav-icon">&#9654;</span> 분석 체험하기</a></li>
       </ul>
     </nav>
   </aside>
@@ -67,8 +68,8 @@
           코인 노래방을 내 보컬 스튜디오로. 녹음만 하면, 원곡 대비 피치와 지난 연습 대비 성장을 자동 분석합니다.
         </p>
         <div class="hero__actions reveal reveal-delay-2">
-          <button type="button" class="btn btn--primary js-track-cta js-open-reveal" data-event="cta_download">지금 바로 다운로드</button>
-          <a href="#solution" class="btn btn--outline js-track-cta" data-event="cta_hero_features">핵심 기능 보기</a>
+          <a href="#analyze" class="btn btn--primary js-track-cta" data-event="cta_try_demo">분석 체험하기</a>
+          <a href="#problem" class="btn btn--outline js-track-cta" data-event="cta_score_difference">코노 점수와 뭐가 다를까요?</a>
         </div>
       </div>
     </section>
@@ -163,14 +164,6 @@
             </div>
           </div>
         </div>
-      </div>
-    </section>
-
-    <section class="cta-banner" id="cta-bottom">
-      <div class="cta-banner__content reveal">
-        <h2 class="cta-banner__title">이제, 내 성장이 보일 차례</h2>
-        <p class="cta-banner__text">첫달 무료 코드와 함께 베타테스터로 참여하세요.</p>
-        <button type="button" class="btn btn--primary js-track-cta js-open-reveal" data-event="cta_download_bottom">지금 바로 다운로드</button>
       </div>
     </section>
 
@@ -388,6 +381,14 @@
       </div>
     </section>
 
+    <section class="cta-banner" id="cta-bottom">
+      <div class="cta-banner__content reveal">
+        <h2 class="cta-banner__title">이제, 내 성장이 보일 차례</h2>
+        <p class="cta-banner__text">첫달 무료 코드와 함께 베타테스터로 참여하세요.</p>
+        <button type="button" class="btn btn--primary js-track-cta js-open-reveal" data-event="cta_release_notify_banner">출시 소식 이메일로 받기</button>
+      </div>
+    </section>
+
     <footer class="footer">
       <div class="footer__top">
         <div class="footer__brand">KONO<span>PRO</span></div>
@@ -404,8 +405,8 @@
     <div class="reveal-modal__overlay" data-close-modal></div>
     <div class="reveal-modal__content" role="dialog" aria-modal="true" aria-labelledby="revealTitle">
       <button type="button" class="reveal-modal__close" aria-label="닫기" data-close-modal>&times;</button>
-      <h2 class="reveal-modal__title" id="revealTitle">거의 다 왔어요</h2>
-      <p class="reveal-modal__message">이메일 등록 해주시면 베타테스터로 등록하여 <strong>첫달 무료 코드</strong>를 제공해드립니다. 감사합니다.</p>
+      <h2 class="reveal-modal__title" id="revealTitle">출시되면 알려드릴게요</h2>
+      <p class="reveal-modal__message">이메일을 남겨주시면 KonoPro 앱 출시 또는 베타테스트를 진행할 때 소식을 보내드릴게요.</p>
 
       <form id="waitlistForm" class="fake-door-form" novalidate>
         <div class="fake-door-form__field">
@@ -418,7 +419,7 @@
           <textarea id="advice" name="advice" rows="3" placeholder="원하는 곡, 바라는 점 — 자유롭게 적어주세요"></textarea>
         </div>
 
-        <button type="submit" class="btn btn--primary btn--full">베타 코드 받기</button>
+        <button type="submit" class="btn btn--primary btn--full">출시 소식 받기</button>
         <p id="formFeedback" class="form-feedback" role="status" aria-live="polite"></p>
       </form>
     </div>

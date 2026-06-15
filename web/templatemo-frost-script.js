@@ -262,7 +262,7 @@
       event.preventDefault();
       elements.formFeedback.classList.remove("is-error", "is-loading");
       elements.formFeedback.classList.add("is-success");
-      elements.formFeedback.textContent = "베타 등록이 완료되었습니다. 아래 분석 체험도 바로 사용해볼 수 있습니다.";
+      elements.formFeedback.textContent = "등록되었습니다. 출시 또는 베타테스트를 진행하면 소식을 보내드릴게요.";
       elements.waitlistForm.reset();
     });
   }
