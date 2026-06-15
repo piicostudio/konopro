@@ -5,7 +5,11 @@ import numpy as np
 import konopro_research.separation as separation
 from konopro_research.audio_io import write_wav
 from konopro_research.baseline import MelodyBaseline, cents_difference, demo_baseline, midi_to_hz
-from konopro_research.contour_scoring import compare_takes_to_reference_contour
+from konopro_research.contour_scoring import (
+    compare_takes_to_reference_contour,
+    score_take_against_reference_contour,
+    score_take_against_reference_contour_global_offset,
+)
 from konopro_research.demo_data import synthesize_take
 from konopro_research.matching import (
     build_demo_section_catalog,
@@ -65,6 +69,33 @@ def test_contour_scoring_penalizes_same_shape_wrong_key() -> None:
 
     assert comparison.current.pitch_accuracy_score < comparison.previous.pitch_accuracy_score
     assert any("semitone" in warning for warning in comparison.current.warnings)
+
+
+def test_global_offset_contour_scoring_rewards_simple_shift() -> None:
+    reference = dynamic_contour()
+    shifted_take = reference.shifted(1.25)
+
+    result = score_take_against_reference_contour_global_offset(shifted_take, reference)
+
+    assert result.pitch_accuracy_score > 95
+    assert result.stability_score > 95
+    assert result.coverage_score > 95
+    assert abs(result.timing_offset_s - 1.25) < 0.05
+
+
+def test_global_offset_contour_scoring_does_not_time_warp_pitch_errors() -> None:
+    reference = ramp_contour()
+    compressed_take = PitchContour(
+        reference.times_s * 0.72,
+        reference.frequencies_hz,
+        reference.confidence,
+    )
+
+    dtw_result = score_take_against_reference_contour(compressed_take, reference)
+    global_result = score_take_against_reference_contour_global_offset(compressed_take, reference)
+
+    assert dtw_result.pitch_accuracy_score > 90
+    assert global_result.pitch_accuracy_score < dtw_result.pitch_accuracy_score - 30
 
 
 def test_demo_section_matching_finds_demo_chorus() -> None:
@@ -276,5 +307,12 @@ def dynamic_contour(
     melodic_motion = 2.8 * np.sin(2.0 * np.pi * times / 4.0) + 0.9 * np.sin(2.0 * np.pi * times / 1.7)
     vibrato = (vibrato_cents / 100.0) * np.sin(2.0 * np.pi * 5.2 * times)
     midi = 62.0 + melodic_motion + cents_error / 100.0 + vibrato
+    confidence = np.full(times.shape, 0.95)
+    return PitchContour(times, midi_to_hz(midi), confidence)
+
+
+def ramp_contour() -> PitchContour:
+    times = np.arange(0.0, 8.0, 0.025)
+    midi = 58.0 + 1.25 * times + 0.4 * np.sin(2.0 * np.pi * times / 3.5)
     confidence = np.full(times.shape, 0.95)
     return PitchContour(times, midi_to_hz(midi), confidence)

@@ -25,8 +25,10 @@ if str(SRC_ROOT) not in sys.path:
 from konopro_research.audio_io import load_audio, write_wav  # noqa: E402
 from konopro_research.baseline import demo_baseline, hz_to_midi, midi_to_hz  # noqa: E402
 from konopro_research.contour_scoring import (  # noqa: E402
+    compare_takes_to_reference_contour_global_offset,
     compare_takes_to_reference_contour,
     contour_timing_debug,
+    score_take_against_reference_contour_global_offset,
     score_take_against_reference_contour,
 )
 from konopro_research.demo_data import ensure_demo_data  # noqa: E402
@@ -394,8 +396,16 @@ def _empty_evaluation_response(message: str) -> tuple[Any, ...]:
         pd.DataFrame(),
         None,
         None,
+        None,
+        pd.DataFrame(),
+        {},
         pd.DataFrame(),
         pd.DataFrame(),
+        pd.DataFrame(),
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -409,6 +419,87 @@ def _empty_evaluation_response(message: str) -> tuple[Any, ...]:
         None,
         pd.DataFrame(),
         {},
+        {},
+        message,
+    )
+
+
+def _empty_contour_state() -> dict[str, Any]:
+    return {
+        "reference_mode": None,
+        "reference_path": None,
+        "current_path": None,
+        "previous_path": None,
+        "reference_contour": None,
+        "current_contour": None,
+        "previous_contour": None,
+        "raw_plots": {},
+        "profile_rows": [],
+    }
+
+
+def _analysis_paths(
+    reference_audio: str | None,
+    current_take: str | None,
+    previous_take: str | None,
+    prepared_state: dict[str, Any] | None,
+) -> tuple[str | None, str | None, str | None]:
+    prepared_state = prepared_state or {}
+    return (
+        prepared_state.get("reference_analysis") or reference_audio,
+        prepared_state.get("current_analysis") or current_take,
+        prepared_state.get("previous_analysis") or previous_take,
+    )
+
+
+def _contour_state_matches(
+    contour_state: dict[str, Any] | None,
+    *,
+    reference_mode: str,
+    reference_path: str | None,
+    current_path: str | None,
+    previous_path: str | None,
+) -> bool:
+    if not contour_state:
+        return False
+    return (
+        contour_state.get("reference_mode") == reference_mode
+        and contour_state.get("reference_path") == reference_path
+        and contour_state.get("current_path") == current_path
+        and contour_state.get("previous_path") == previous_path
+        and contour_state.get("current_contour") is not None
+    )
+
+
+def _profile_table(rows: list[dict[str, Any]] | None) -> pd.DataFrame:
+    columns = ["stage", "elapsed_s", "notes"]
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _profile_row(stage: str, started: float, notes: str = "") -> dict[str, Any]:
+    return {
+        "stage": stage,
+        "elapsed_s": round(time.perf_counter() - started, 2),
+        "notes": notes,
+    }
+
+
+def _empty_alignment_check_response(
+    contour_state: dict[str, Any] | None,
+    message: str,
+) -> tuple[Any, ...]:
+    return (
+        contour_state or _empty_contour_state(),
+        message,
+        pd.DataFrame(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         {},
         message,
     )
@@ -462,14 +553,14 @@ def _evaluation_steps_table(
             {
                 "step": 5,
                 "stage": "Full-track alignment",
-                "what happens": "Uploaded-reference scoring aligns the full reference contour against the full current contour. Demo-baseline scoring estimates timing offset against symbolic notes.",
-                "why it matters": "A late start or extra intro can dominate full-track timing, even when a short section matches well.",
+                "what happens": "Uploaded-reference scoring uses DTW only to estimate one global offset. The score then compares same-time frames after that offset. Demo-baseline scoring estimates timing offset against symbolic notes.",
+                "why it matters": "The full-song score no longer lets DTW stretch or compress local timing for pitch/stability scoring.",
                 "latest value": f"timing_offset_s={score.timing_offset_s}",
             },
             {
                 "step": 6,
                 "stage": "Metric calculation",
-                "what happens": "Pitch accuracy, stability, coverage, and timing are computed from the aligned contours.",
+                "what happens": "Pitch accuracy, stability, and coverage are computed from 1:1 same-time contour frames after the global offset.",
                 "why it matters": "Each metric answers a different question; one bad metric can explain a low overall score.",
                 "latest value": f"pitch={score.pitch_accuracy_score}; stability={score.stability_score}; timing={score.timing_score}; coverage={score.coverage_score}",
             },
@@ -528,6 +619,191 @@ def _score_breakdown_table(score: Any) -> pd.DataFrame:
     )
 
 
+def _build_stability_diagnostics(
+    *,
+    reference_contour: PitchContour | None,
+    current_contour: PitchContour | None,
+    score: Any,
+    stability_penalty: float,
+) -> tuple[str | None, pd.DataFrame, dict[str, Any]]:
+    calibration = _stability_calibration_table(score, stability_penalty)
+    if reference_contour is None or current_contour is None:
+        return (
+            None,
+            calibration,
+            {
+                "available": False,
+                "reason": "stability residual plot needs uploaded-reference contours",
+                "selected_stability_penalty": stability_penalty,
+                "pitch_stability_cents": getattr(score, "pitch_stability_cents", None),
+            },
+        )
+
+    errors = _same_time_pitch_errors_cents(
+        reference_contour,
+        current_contour,
+        offset_s=float(getattr(score, "timing_offset_s", 0.0) or 0.0),
+    )
+    if errors.empty:
+        return (
+            None,
+            calibration,
+            {
+                "available": False,
+                "reason": "not enough same-time voiced frames for stability diagnostics",
+                "selected_stability_penalty": stability_penalty,
+                "pitch_stability_cents": getattr(score, "pitch_stability_cents", None),
+            },
+        )
+
+    signed_errors = errors["signed_error_cents"].to_numpy(dtype=float)
+    transposition = float(np.nanmedian(signed_errors))
+    residuals = signed_errors - transposition
+    errors["residual_error_cents"] = residuals
+    stability_cents = float(np.nanstd(residuals))
+    abs_residuals = np.abs(residuals)
+    plot_path = _save_stability_residual_plot(
+        errors,
+        stability_cents=stability_cents,
+        stability_penalty=stability_penalty,
+        filename="evaluation_stability_residuals.png",
+    )
+    diagnostics = {
+        "available": True,
+        "method": "global-offset 1:1 residual pitch errors",
+        "matched_same_time_frames": int(len(errors)),
+        "timing_offset_s": round(float(getattr(score, "timing_offset_s", 0.0) or 0.0), 3),
+        "estimated_transposition_cents": round(transposition, 2),
+        "pitch_stability_cents": round(stability_cents, 2),
+        "selected_stability_penalty": stability_penalty,
+        "zero_score_threshold_cents": round(100.0 / stability_penalty, 2) if stability_penalty > 0 else None,
+        "median_abs_residual_cents": round(float(np.nanmedian(abs_residuals)), 2),
+        "p90_abs_residual_cents": round(float(np.nanpercentile(abs_residuals, 90)), 2),
+        "p95_abs_residual_cents": round(float(np.nanpercentile(abs_residuals, 95)), 2),
+        "max_abs_residual_cents": round(float(np.nanmax(abs_residuals)), 2),
+    }
+    return plot_path, calibration, diagnostics
+
+
+def _same_time_pitch_errors_cents(
+    reference: PitchContour,
+    current: PitchContour,
+    *,
+    offset_s: float,
+) -> pd.DataFrame:
+    current_hz, available = _sample_contour_nearest_for_times(current, reference.times_s + offset_s)
+    matched = reference.voiced_mask & available & np.isfinite(current_hz)
+    matched &= np.isfinite(reference.frequencies_hz) & (reference.frequencies_hz > 0) & (current_hz > 0)
+    if np.count_nonzero(matched) < 3:
+        return pd.DataFrame(columns=["reference_time_s", "current_time_s", "signed_error_cents"])
+    signed_errors = (hz_to_midi(current_hz[matched]) - hz_to_midi(reference.frequencies_hz[matched])) * 100.0
+    return pd.DataFrame(
+        {
+            "reference_time_s": reference.times_s[matched],
+            "current_time_s": reference.times_s[matched] + offset_s,
+            "signed_error_cents": signed_errors,
+        }
+    )
+
+
+def _sample_contour_nearest_for_times(
+    contour: PitchContour,
+    target_times_s: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    target_times = np.asarray(target_times_s, dtype=float)
+    sampled = np.full(target_times.shape, np.nan, dtype=float)
+    available = np.zeros(target_times.shape, dtype=bool)
+    if contour.times_s.size == 0 or target_times.size == 0:
+        return sampled, available
+
+    indices = np.searchsorted(contour.times_s, target_times)
+    right = np.clip(indices, 0, contour.times_s.size - 1)
+    left = np.clip(indices - 1, 0, contour.times_s.size - 1)
+    left_distance = np.abs(target_times - contour.times_s[left])
+    right_distance = np.abs(target_times - contour.times_s[right])
+    nearest = np.where(left_distance <= right_distance, left, right)
+    nearest_distance = np.minimum(left_distance, right_distance)
+    max_distance = max(_median_contour_step_s(contour) * 1.5, 1e-6)
+    available = nearest_distance <= max_distance
+    sampled[available] = contour.frequencies_hz[nearest[available]]
+    return sampled, available
+
+
+def _median_contour_step_s(contour: PitchContour) -> float:
+    if contour.times_s.size < 2:
+        return 0.02
+    diffs = np.diff(np.sort(contour.times_s))
+    diffs = diffs[np.isfinite(diffs) & (diffs > 0)]
+    if diffs.size == 0:
+        return 0.02
+    return float(np.nanmedian(diffs))
+
+
+def _stability_calibration_table(score: Any, selected_penalty: float) -> pd.DataFrame:
+    stability_cents = float(getattr(score, "pitch_stability_cents", np.nan))
+    pitch = float(getattr(score, "pitch_accuracy_score", 0.0) or 0.0)
+    coverage = float(getattr(score, "coverage_score", 0.0) or 0.0)
+    timing = float(getattr(score, "timing_score", 0.0) or 0.0)
+    penalties = sorted({0.25, 0.35, 0.50, 0.70, 0.90, 1.10, 1.30, round(float(selected_penalty), 2)})
+    rows: list[dict[str, Any]] = []
+    for penalty in penalties:
+        if np.isfinite(stability_cents):
+            stability = float(np.clip(100.0 - stability_cents * penalty, 0.0, 100.0))
+            overall = 0.50 * pitch + 0.20 * stability + 0.15 * coverage + 0.15 * timing
+            zero_threshold = 100.0 / penalty if penalty > 0 else np.nan
+        else:
+            stability = np.nan
+            overall = np.nan
+            zero_threshold = np.nan
+        rows.append(
+            {
+                "selected": penalty == round(float(selected_penalty), 2),
+                "stability_penalty": penalty,
+                "zero_if_stability_cents_above": round(float(zero_threshold), 2)
+                if np.isfinite(zero_threshold)
+                else np.nan,
+                "stability_score": round(float(stability), 2) if np.isfinite(stability) else np.nan,
+                "overall_if_only_stability_changes": round(float(overall), 2) if np.isfinite(overall) else np.nan,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _save_stability_residual_plot(
+    errors: pd.DataFrame,
+    *,
+    stability_cents: float,
+    stability_penalty: float,
+    filename: str,
+) -> str:
+    import matplotlib.pyplot as plt
+
+    times = errors["reference_time_s"].to_numpy(dtype=float)
+    residuals = errors["residual_error_cents"].to_numpy(dtype=float)
+    fig, axes = plt.subplots(2, 1, figsize=(10, 6.2))
+    axes[0].plot(times, residuals, color="#2563eb", linewidth=0.9, alpha=0.85)
+    axes[0].axhline(0.0, color="#111827", linewidth=0.9, alpha=0.75)
+    axes[0].axhline(stability_cents, color="#ef4444", linewidth=0.8, linestyle="--", alpha=0.65)
+    axes[0].axhline(-stability_cents, color="#ef4444", linewidth=0.8, linestyle="--", alpha=0.65)
+    axes[0].set_title("Residual pitch error after transposition removal")
+    axes[0].set_xlabel("Reference time (s)")
+    axes[0].set_ylabel("Residual error (cents)")
+    axes[0].grid(True, alpha=0.25)
+
+    axes[1].hist(residuals, bins=48, color="#2563eb", alpha=0.78)
+    axes[1].axvline(0.0, color="#111827", linewidth=0.9, alpha=0.75)
+    axes[1].axvline(stability_cents, color="#ef4444", linewidth=0.8, linestyle="--", alpha=0.65)
+    axes[1].axvline(-stability_cents, color="#ef4444", linewidth=0.8, linestyle="--", alpha=0.65)
+    axes[1].set_title(
+        f"Distribution, std={stability_cents:.1f} cents, penalty={stability_penalty:.2f}"
+    )
+    axes[1].set_xlabel("Residual error (cents)")
+    axes[1].set_ylabel("Frames")
+    axes[1].grid(True, alpha=0.25)
+    fig.tight_layout()
+    return _save_plot(fig, filename)
+
+
 def _build_evaluation_diagnostics(
     *,
     reference_mode: str,
@@ -539,7 +815,9 @@ def _build_evaluation_diagnostics(
     reference_contour: PitchContour | None,
     score: Any,
     timing_debug: dict[str, object] | None,
+    raw_plot_paths: dict[str, str | None] | None = None,
 ) -> tuple[Any, ...]:
+    raw_plot_paths = raw_plot_paths or {}
     steps = _evaluation_steps_table(
         reference_mode=reference_mode,
         reference_path=reference_path,
@@ -571,17 +849,17 @@ def _build_evaluation_diagnostics(
     reference_preview = _crop_audio_file(reference_path, 0.0, 30.0, "evaluation_reference_preview.wav")
     current_preview = _crop_audio_file(current_path, 0.0, 30.0, "evaluation_current_preview.wav")
     previous_preview = _crop_audio_file(previous_path, 0.0, 30.0, "evaluation_previous_preview.wav")
-    reference_raw_plot = _raw_clean_plot_for_path(
+    reference_raw_plot = raw_plot_paths.get("reference") or _raw_clean_plot_for_path(
         reference_path,
         "evaluation reference raw vs cleaned pitch",
         "evaluation_reference_raw_clean.png",
     )
-    current_raw_plot = _raw_clean_plot_for_path(
+    current_raw_plot = raw_plot_paths.get("current") or _raw_clean_plot_for_path(
         current_path,
         "evaluation current raw vs cleaned pitch",
         "evaluation_current_raw_clean.png",
     )
-    previous_raw_plot = _raw_clean_plot_for_path(
+    previous_raw_plot = raw_plot_paths.get("previous") or _raw_clean_plot_for_path(
         previous_path,
         "evaluation previous raw vs cleaned pitch",
         "evaluation_previous_raw_clean.png",
@@ -596,6 +874,22 @@ def _build_evaluation_diagnostics(
         if reference_contour is not None
         else None
     )
+    (
+        aligned_reference_audio,
+        aligned_current_audio,
+        aligned_ab_audio,
+        aligned_mix_audio,
+        audible_alignment_details,
+    ) = _build_offset_alignment_audio(
+        reference_path=reference_path,
+        current_path=current_path,
+        timing_debug=timing_debug,
+        score=score,
+        reference_contour=reference_contour,
+        current_contour=current_contour,
+    )
+    timing_debug_payload = dict(timing_debug or {})
+    timing_debug_payload["audible_alignment_check"] = audible_alignment_details
     return (
         steps,
         audio_table,
@@ -610,8 +904,12 @@ def _build_evaluation_diagnostics(
         previous_raw_plot,
         alignment_plot,
         normalization_plot,
+        aligned_reference_audio,
+        aligned_current_audio,
+        aligned_ab_audio,
+        aligned_mix_audio,
         _score_breakdown_table(score),
-        timing_debug or {},
+        timing_debug_payload,
     )
 
 
@@ -803,6 +1101,174 @@ def _crop_audio_file(
     return str(output_path)
 
 
+def _build_offset_alignment_audio(
+    *,
+    reference_path: str | None,
+    current_path: str | None,
+    timing_debug: dict[str, object] | None,
+    score: Any,
+    reference_contour: PitchContour | None,
+    current_contour: PitchContour | None,
+    max_duration_s: float = 24.0,
+) -> tuple[str | None, str | None, str | None, str | None, dict[str, object]]:
+    if not reference_path or not current_path:
+        return (None, None, None, None, {"available": False, "reason": "reference/current audio missing"})
+
+    offset_s = _alignment_offset_s(timing_debug, score)
+    if offset_s is None:
+        return (None, None, None, None, {"available": False, "reason": "timing offset unavailable"})
+
+    reference_audio, reference_sr = load_audio(reference_path)
+    current_audio, current_sr = load_audio(current_path, target_sr=reference_sr)
+    reference_duration_s = len(reference_audio) / float(reference_sr) if reference_sr else 0.0
+    current_duration_s = len(current_audio) / float(current_sr) if current_sr else 0.0
+
+    # The scorer reports offset as: current/take time - reference time.
+    overlap_start_s = max(0.0, -offset_s)
+    overlap_end_s = min(reference_duration_s, current_duration_s - offset_s)
+    if overlap_end_s <= overlap_start_s:
+        return (
+            None,
+            None,
+            None,
+            None,
+            {
+                "available": False,
+                "reason": "no overlapping audio after applying timing offset",
+                "global_offset_s": round(float(offset_s), 3),
+            },
+        )
+
+    audition_start_s = _audition_start_s(
+        reference_contour=reference_contour,
+        current_contour=current_contour,
+        offset_s=offset_s,
+        overlap_start_s=overlap_start_s,
+        overlap_end_s=overlap_end_s,
+        max_duration_s=max_duration_s,
+    )
+    audition_duration_s = min(float(max_duration_s), overlap_end_s - audition_start_s)
+    if audition_duration_s <= 0.1:
+        return (
+            None,
+            None,
+            None,
+            None,
+            {
+                "available": False,
+                "reason": "overlap is too short for an audible preview",
+                "global_offset_s": round(float(offset_s), 3),
+            },
+        )
+
+    reference_start_s = audition_start_s
+    current_start_s = audition_start_s + offset_s
+    reference_clip = _slice_audio(reference_audio, reference_sr, reference_start_s, audition_duration_s)
+    current_clip = _slice_audio(current_audio, current_sr, current_start_s, audition_duration_s)
+    clip_length = min(reference_clip.size, current_clip.size)
+    if clip_length <= 1:
+        return (
+            None,
+            None,
+            None,
+            None,
+            {
+                "available": False,
+                "reason": "aligned preview clips are empty",
+                "global_offset_s": round(float(offset_s), 3),
+            },
+        )
+
+    reference_clip = reference_clip[:clip_length]
+    current_clip = current_clip[:clip_length]
+    reference_preview = _normalize_preview_audio(reference_clip)
+    current_preview = _normalize_preview_audio(current_clip)
+    silence = np.zeros(int(round(reference_sr * 0.75)), dtype=np.float32)
+    ab_audio = np.concatenate([reference_preview, silence, current_preview]).astype(np.float32)
+    mix_audio = _normalize_preview_audio(0.5 * reference_preview + 0.5 * current_preview)
+
+    reference_out = OUTPUT_DIR / "evaluation_offset_reference.wav"
+    current_out = OUTPUT_DIR / "evaluation_offset_current.wav"
+    ab_out = OUTPUT_DIR / "evaluation_offset_ab.wav"
+    mix_out = OUTPUT_DIR / "evaluation_offset_overlay.wav"
+    write_wav(reference_out, reference_preview, reference_sr)
+    write_wav(current_out, current_preview, reference_sr)
+    write_wav(ab_out, ab_audio, reference_sr)
+    write_wav(mix_out, mix_audio, reference_sr)
+
+    details = {
+        "available": True,
+        "method": "global-offset crop only; no DTW time-warping",
+        "global_offset_s": round(float(offset_s), 3),
+        "reference_start_s": round(float(reference_start_s), 3),
+        "current_start_s": round(float(current_start_s), 3),
+        "duration_s": round(float(clip_length / reference_sr), 3),
+        "interpretation": (
+            "If these excerpts do not sound like the same phrase, the full-track scorer is "
+            "probably aligning the wrong region."
+        ),
+    }
+    return (str(reference_out), str(current_out), str(ab_out), str(mix_out), details)
+
+
+def _alignment_offset_s(timing_debug: dict[str, object] | None, score: Any) -> float | None:
+    if timing_debug:
+        for key in ("global_offset_s", "raw_delta_s_median"):
+            value = timing_debug.get(key)
+            if isinstance(value, (int, float)) and np.isfinite(value):
+                return float(value)
+    value = getattr(score, "timing_offset_s", None)
+    if isinstance(value, (int, float)) and np.isfinite(value):
+        return float(value)
+    return None
+
+
+def _audition_start_s(
+    *,
+    reference_contour: PitchContour | None,
+    current_contour: PitchContour | None,
+    offset_s: float,
+    overlap_start_s: float,
+    overlap_end_s: float,
+    max_duration_s: float,
+) -> float:
+    anchors: list[float] = []
+    if reference_contour is not None:
+        reference_times = reference_contour.times_s[reference_contour.voiced_mask]
+        reference_times = reference_times[
+            (reference_times >= overlap_start_s) & (reference_times <= overlap_end_s)
+        ]
+        if reference_times.size:
+            anchors.append(float(reference_times[0]))
+    if current_contour is not None:
+        current_times = current_contour.times_s[current_contour.voiced_mask] - offset_s
+        current_times = current_times[(current_times >= overlap_start_s) & (current_times <= overlap_end_s)]
+        if current_times.size:
+            anchors.append(float(current_times[0]))
+
+    if anchors:
+        start_s = max(overlap_start_s, max(anchors) - 1.0)
+    else:
+        start_s = overlap_start_s
+
+    return min(start_s, overlap_end_s)
+
+
+
+def _slice_audio(audio: np.ndarray, sample_rate: int, start_s: float, duration_s: float) -> np.ndarray:
+    start_index = max(0, int(round(start_s * sample_rate)))
+    end_index = min(len(audio), start_index + max(1, int(round(duration_s * sample_rate))))
+    return np.asarray(audio[start_index:end_index], dtype=np.float32)
+
+
+def _normalize_preview_audio(audio: np.ndarray, *, target_peak: float = 0.85) -> np.ndarray:
+    preview = np.nan_to_num(np.asarray(audio, dtype=np.float32))
+    peak = float(np.max(np.abs(preview))) if preview.size else 0.0
+    if peak > 1e-8:
+        preview = preview * min(1.0, float(target_peak) / peak)
+    return np.clip(preview, -1.0, 1.0).astype(np.float32)
+
+
 def _raw_clean_plot_for_path(path: str | None, title: str, filename: str) -> str | None:
     if not path:
         return None
@@ -825,6 +1291,102 @@ def _save_raw_clean_plot(raw: PitchContour, cleaned: PitchContour, title: str, f
     ax.legend(loc="best")
     fig.tight_layout()
     return _save_plot(fig, filename)
+
+
+def _extract_clean_contour_with_plot(
+    path: str,
+    *,
+    name: str,
+    title: str,
+    filename: str,
+    stage: str,
+) -> tuple[PitchContour, str, dict[str, Any]]:
+    started = time.perf_counter()
+    audio, sample_rate = load_audio(path)
+    raw = extract_pitch(audio, sample_rate, name=name, **PITCH_KWARGS)
+    cleaned = clean_pitch_contour(raw, **CLEAN_KWARGS)
+    plot_path = _save_raw_clean_plot(raw, cleaned, title, filename)
+    notes = (
+        f"{Path(path).name}; "
+        f"{_voiced_frame_count(cleaned)} voiced frames over {_contour_duration_s(cleaned):.2f}s"
+    )
+    return cleaned, plot_path, _profile_row(stage, started, notes)
+
+
+def _extract_evaluation_contours(
+    *,
+    reference_mode: str,
+    reference_path: str | None,
+    current_path: str | None,
+    previous_path: str | None,
+    progress: gr.Progress | None = None,
+) -> tuple[dict[str, Any], str, pd.DataFrame]:
+    if current_path is None:
+        message = "Upload or load a current take before extracting pitch contours."
+        return _empty_contour_state(), message, pd.DataFrame()
+    if reference_mode == "Uploaded reference audio" and reference_path is None:
+        message = "Upload or load reference audio for uploaded-reference contour extraction."
+        return _empty_contour_state(), message, pd.DataFrame()
+
+    profile_rows: list[dict[str, Any]] = []
+    raw_plots: dict[str, str | None] = {"reference": None, "current": None, "previous": None}
+    reference_contour: PitchContour | None = None
+    previous_contour: PitchContour | None = None
+
+    if reference_mode == "Uploaded reference audio" and reference_path is not None:
+        if progress is not None:
+            progress(0.15, desc="Extracting reference pitch contour")
+        reference_contour, raw_plots["reference"], row = _extract_clean_contour_with_plot(
+            reference_path,
+            name="reference",
+            title="evaluation reference raw vs cleaned pitch",
+            filename="evaluation_reference_raw_clean.png",
+            stage="Reference pYIN + cleaning",
+        )
+        profile_rows.append(row)
+
+    if progress is not None:
+        progress(0.45, desc="Extracting current pitch contour")
+    current_contour, raw_plots["current"], row = _extract_clean_contour_with_plot(
+        current_path,
+        name="current",
+        title="evaluation current raw vs cleaned pitch",
+        filename="evaluation_current_raw_clean.png",
+        stage="Current pYIN + cleaning",
+    )
+    profile_rows.append(row)
+
+    if previous_path:
+        if progress is not None:
+            progress(0.70, desc="Extracting previous pitch contour")
+        previous_contour, raw_plots["previous"], row = _extract_clean_contour_with_plot(
+            previous_path,
+            name="previous",
+            title="evaluation previous raw vs cleaned pitch",
+            filename="evaluation_previous_raw_clean.png",
+            stage="Previous pYIN + cleaning",
+        )
+        profile_rows.append(row)
+
+    state = {
+        "reference_mode": reference_mode,
+        "reference_path": reference_path,
+        "current_path": current_path,
+        "previous_path": previous_path,
+        "reference_contour": reference_contour,
+        "current_contour": current_contour,
+        "previous_contour": previous_contour,
+        "raw_plots": raw_plots,
+        "profile_rows": profile_rows,
+    }
+    status = (
+        "Pitch contours ready. "
+        f"Current has {_voiced_frame_count(current_contour)} voiced frames over "
+        f"{_contour_duration_s(current_contour):.2f}s."
+    )
+    if progress is not None:
+        progress(1.0, desc="Contours ready")
+    return state, status, _profile_table(profile_rows)
 
 
 def _plot_pitch_contour(
@@ -1801,7 +2363,7 @@ def prepare_audio(
 
     workflow = (
         "Step 2 complete: we now have analysis inputs. "
-        "Next: run Evaluation (Step 3), then matching (Step 4)."
+        "Next: inspect pitch/alignment (Step 3), then run full-song evaluation (Step 4)."
     )
     return (
         state,
@@ -1817,7 +2379,7 @@ def prepare_audio(
     )
 
 
-def run_evaluation(
+def run_contour_extraction(
     reference_mode: str,
     reference_audio: str | None,
     current_take: str | None,
@@ -1825,78 +2387,338 @@ def run_evaluation(
     prepared_state: dict[str, Any] | None,
     progress: gr.Progress | None = None,
 ) -> tuple[Any, ...]:
-    if progress is not None:
-        progress(0.00, desc="Loading files and baseline")
+    reference_path, current_path, previous_path = _analysis_paths(
+        reference_audio,
+        current_take,
+        previous_take,
+        prepared_state,
+    )
     started = time.perf_counter()
-    prepared_state = prepared_state or {}
-    reference_path = prepared_state.get("reference_analysis") or reference_audio
-    current_path = prepared_state.get("current_analysis") or current_take
-    previous_path = prepared_state.get("previous_analysis") or previous_take
+    try:
+        state, status, profile = _extract_evaluation_contours(
+            reference_mode=reference_mode,
+            reference_path=reference_path,
+            current_path=current_path,
+            previous_path=previous_path,
+            progress=progress,
+        )
+        raw_plots = state.get("raw_plots", {})
+        if state.get("current_contour") is not None:
+            status = f"{status} Extraction finished in {time.perf_counter() - started:.2f}s."
+            workflow = "Pitch contours ready. Next: run the audible alignment check or Step 4 full-song evaluation."
+        else:
+            workflow = status
+        return (
+            state,
+            status,
+            profile,
+            raw_plots.get("reference"),
+            raw_plots.get("current"),
+            raw_plots.get("previous"),
+            workflow,
+        )
+    except Exception as exc:
+        message = f"Pitch contour extraction failed after {time.perf_counter() - started:.2f}s: {exc}"
+        return (
+            _empty_contour_state(),
+            message,
+            pd.DataFrame(),
+            None,
+            None,
+            None,
+            message,
+        )
+
+
+def run_alignment_check_only(
+    reference_mode: str,
+    reference_audio: str | None,
+    current_take: str | None,
+    previous_take: str | None,
+    prepared_state: dict[str, Any] | None,
+    contour_state: dict[str, Any] | None,
+    progress: gr.Progress | None = None,
+) -> tuple[Any, ...]:
+    reference_path, current_path, previous_path = _analysis_paths(
+        reference_audio,
+        current_take,
+        previous_take,
+        prepared_state,
+    )
+    if reference_mode != "Uploaded reference audio":
+        message = "Audible alignment check needs Uploaded reference audio mode."
+        return _empty_alignment_check_response(contour_state, message)
+    if current_path is None:
+        message = "Upload or load a current take before running the alignment check."
+        return _empty_alignment_check_response(contour_state, message)
+    if reference_path is None:
+        message = "Upload or load reference audio before running the alignment check."
+        return _empty_alignment_check_response(contour_state, message)
+
+    started = time.perf_counter()
+    profile_rows: list[dict[str, Any]] = []
+    try:
+        if _contour_state_matches(
+            contour_state,
+            reference_mode=reference_mode,
+            reference_path=reference_path,
+            current_path=current_path,
+            previous_path=previous_path,
+        ):
+            state = contour_state or _empty_contour_state()
+            cache_started = time.perf_counter()
+            profile_rows.append(
+                _profile_row(
+                    "Contour cache",
+                    cache_started,
+                    "Reused previously extracted reference/current contours.",
+                )
+            )
+        else:
+            if progress is not None:
+                progress(0.05, desc="Extracting contours")
+            state, _, contour_profile = _extract_evaluation_contours(
+                reference_mode=reference_mode,
+                reference_path=reference_path,
+                current_path=current_path,
+                previous_path=previous_path,
+                progress=None,
+            )
+            profile_rows.extend(contour_profile.to_dict("records"))
+
+        reference_contour = state.get("reference_contour")
+        current_contour = state.get("current_contour")
+        if reference_contour is None or current_contour is None:
+            message = "Alignment check needs both reference and current pitch contours."
+            return _empty_alignment_check_response(state, message)
+
+        if progress is not None:
+            progress(0.65, desc="Running timing alignment")
+        timing_started = time.perf_counter()
+        timing_debug = contour_timing_debug(
+            current_contour,
+            reference_contour,
+            name="current",
+            pitch_kwargs=PITCH_KWARGS,
+            clean_kwargs=CLEAN_KWARGS,
+            dtw_time_weight=CONTOUR_SCORE_KWARGS["dtw_time_weight"],
+            dtw_band_radius=CONTOUR_SCORE_KWARGS["dtw_band_radius"],
+            max_dtw_frames=CONTOUR_SCORE_KWARGS["max_dtw_frames"],
+            timing_penalty=CONTOUR_SCORE_KWARGS["timing_penalty"],
+        )
+        profile_rows.append(
+            _profile_row(
+                "Timing DTW",
+                timing_started,
+                f"{timing_debug.get('matched_pairs_count', 0)} matched pairs.",
+            )
+        )
+
+        if progress is not None:
+            progress(0.78, desc="Building alignment plots")
+        plot_started = time.perf_counter()
+        alignment_plot = _save_dtw_alignment_plot(
+            reference_contour,
+            current_contour,
+            "evaluation_full_track_dtw.png",
+        )
+        normalization_plot = _save_normalization_plot(
+            reference_contour,
+            current_contour,
+            "evaluation_full_track_normalization.png",
+        )
+        profile_rows.append(_profile_row("Alignment plots", plot_started, "DTW links and pitch normalization."))
+
+        if progress is not None:
+            progress(0.88, desc="Building audio audition clips")
+        audio_started = time.perf_counter()
+        (
+            aligned_reference_audio,
+            aligned_current_audio,
+            aligned_ab_audio,
+            aligned_mix_audio,
+            audible_alignment_details,
+        ) = _build_offset_alignment_audio(
+            reference_path=reference_path,
+            current_path=current_path,
+            timing_debug=timing_debug,
+            score=None,
+            reference_contour=reference_contour,
+            current_contour=current_contour,
+        )
+        profile_rows.append(_profile_row("Alignment audio clips", audio_started, "Global-offset excerpts only."))
+
+        timing_debug_payload = dict(timing_debug or {})
+        timing_debug_payload["audible_alignment_check"] = audible_alignment_details
+        elapsed = time.perf_counter() - started
+        profile_rows.append(
+            {"stage": "Alignment check total", "elapsed_s": round(elapsed, 2), "notes": "Contours + DTW + clips."}
+        )
+        status = f"Audible alignment check complete in {elapsed:.2f}s."
+        if progress is not None:
+            progress(1.0, desc="Alignment check ready")
+        workflow = "Alignment check complete. Listen to A/B and overlay before running full evaluation."
+        return (
+            state,
+            status,
+            _profile_table(profile_rows),
+            alignment_plot,
+            normalization_plot,
+            aligned_reference_audio,
+            aligned_current_audio,
+            aligned_ab_audio,
+            aligned_mix_audio,
+            timing_debug_payload,
+            workflow,
+        )
+    except Exception as exc:
+        message = f"Alignment check failed after {time.perf_counter() - started:.2f}s: {exc}"
+        return _empty_alignment_check_response(contour_state, message)
+
+
+def run_evaluation(
+    reference_mode: str,
+    reference_audio: str | None,
+    current_take: str | None,
+    previous_take: str | None,
+    prepared_state: dict[str, Any] | None,
+    contour_state: dict[str, Any] | None,
+    stability_penalty: float | None = None,
+    progress: gr.Progress | None = None,
+) -> tuple[Any, ...]:
+    if progress is not None:
+        progress(0.00, desc="Loading files")
+    started = time.perf_counter()
+    profile_rows: list[dict[str, Any]] = []
+    reference_path, current_path, previous_path = _analysis_paths(
+        reference_audio,
+        current_take,
+        previous_take,
+        prepared_state,
+    )
     if current_path is None:
         message = "Upload or load a current take before evaluation."
         return _empty_evaluation_response(message)
+    if reference_mode == "Uploaded reference audio" and reference_path is None:
+        message = "Upload or load reference audio for this mode."
+        return _empty_evaluation_response(message)
 
     try:
-        if progress is not None:
-            progress(0.20, desc="Extracting baseline")
-        reference_extraction = None
-        if reference_mode == "Uploaded reference audio":
-            if reference_path is None:
-                message = "Upload or load reference audio for this mode."
-                return _empty_evaluation_response(message)
-            reference_extraction = extract_reference_audio(
-                reference_path,
-                title=Path(reference_path).name,
-                window_s=0.20,
-                pitch_kwargs=PITCH_KWARGS,
-                clean_kwargs=CLEAN_KWARGS,
+        active_stability_penalty = (
+            float(stability_penalty)
+            if stability_penalty is not None
+            else float(CONTOUR_SCORE_KWARGS["stability_penalty"])
+        )
+        contour_score_kwargs = {
+            **CONTOUR_SCORE_KWARGS,
+            "stability_penalty": active_stability_penalty,
+        }
+        symbolic_score_kwargs = {
+            **SYMBOLIC_SCORE_KWARGS,
+            "stability_penalty": active_stability_penalty,
+        }
+        if _contour_state_matches(
+            contour_state,
+            reference_mode=reference_mode,
+            reference_path=reference_path,
+            current_path=current_path,
+            previous_path=previous_path,
+        ):
+            active_contour_state = contour_state or _empty_contour_state()
+            cache_started = time.perf_counter()
+            profile_rows.append(
+                _profile_row(
+                    "Contour cache",
+                    cache_started,
+                    "Reused previously extracted contours for plots and timing debug.",
+                )
             )
-            baseline = reference_extraction.baseline
         else:
+            if progress is not None:
+                progress(0.12, desc="Extracting diagnostic contours")
+            active_contour_state, _, contour_profile = _extract_evaluation_contours(
+                reference_mode=reference_mode,
+                reference_path=reference_path,
+                current_path=current_path,
+                previous_path=previous_path,
+                progress=None,
+            )
+            profile_rows.extend(contour_profile.to_dict("records"))
+
+        reference_contour = active_contour_state.get("reference_contour")
+        current_contour = active_contour_state.get("current_contour")
+        previous_contour = active_contour_state.get("previous_contour")
+        raw_plot_paths = active_contour_state.get("raw_plots", {})
+        if current_contour is None:
+            message = "Evaluation needs a current pitch contour, but extraction produced none."
+            return _empty_evaluation_response(message)
+        if reference_mode == "Uploaded reference audio" and reference_contour is None:
+            message = "Uploaded-reference evaluation needs a reference pitch contour."
+            return _empty_evaluation_response(message)
+
+        if reference_mode == "Demo symbolic baseline":
             baseline = demo_baseline()
+        else:
+            baseline = None
 
         if progress is not None:
-            progress(0.45, desc="Running scoring")
+            progress(0.45, desc="Running full scoring")
+        scoring_started = time.perf_counter()
         if previous_path:
-            if reference_extraction is not None:
-                comparison = compare_takes_to_reference_contour(
-                    previous_path,
-                    current_path,
-                    reference_extraction.contour,
-                    **CONTOUR_SCORE_KWARGS,
+            if reference_contour is not None:
+                comparison = compare_takes_to_reference_contour_global_offset(
+                    previous_contour,
+                    current_contour,
+                    reference_contour,
+                    previous_audio_path=previous_path,
+                    current_audio_path=current_path,
+                    **contour_score_kwargs,
                 )
             else:
                 comparison = compare_takes(
                     previous_path,
                     current_path,
                     baseline,
-                    **SYMBOLIC_SCORE_KWARGS,
+                    **symbolic_score_kwargs,
                 )
             score = comparison.current
             details = comparison.to_dict()
             verdict = comparison.verdict
         else:
-            if reference_extraction is not None:
-                score = score_take_against_reference_contour(
-                    current_path,
-                    reference_extraction.contour,
+            if reference_contour is not None:
+                score = score_take_against_reference_contour_global_offset(
+                    current_contour,
+                    reference_contour,
                     name="current",
-                    **CONTOUR_SCORE_KWARGS,
+                    take_audio_path=current_path,
+                    **contour_score_kwargs,
                 )
             else:
-                score = score_take(current_path, baseline, name="current", **SYMBOLIC_SCORE_KWARGS)
+                score = score_take(current_path, baseline, name="current", **symbolic_score_kwargs)
             details = score.to_dict()
             verdict = "single take"
+        if reference_contour is not None:
+            details["scoring_method"] = "global_offset_1_to_1_contour"
+        profile_rows.append(
+            _profile_row(
+                "Full scoring",
+                scoring_started,
+                (
+                    "Global-offset 1:1 contour scorer; DTW estimates offset only."
+                    if reference_contour is not None
+                    else "Symbolic baseline scorer."
+                ),
+            )
+        )
 
         if progress is not None:
-            progress(0.75, desc="Building plots")
-        current_contour = _extract_clean_contour(current_path, "current")
-        previous_contour = _extract_clean_contour(previous_path, "previous") if previous_path else None
+            progress(0.72, desc="Running timing debug")
         timing_debug = None
-        if reference_extraction is not None:
+        if reference_contour is not None:
+            timing_started = time.perf_counter()
             timing_debug = contour_timing_debug(
-                current_path,
-                reference_extraction.contour,
+                current_contour,
+                reference_contour,
                 name="current",
                 pitch_kwargs=PITCH_KWARGS,
                 clean_kwargs=CLEAN_KWARGS,
@@ -1905,9 +2727,21 @@ def run_evaluation(
                 max_dtw_frames=CONTOUR_SCORE_KWARGS["max_dtw_frames"],
                 timing_penalty=CONTOUR_SCORE_KWARGS["timing_penalty"],
             )
+            profile_rows.append(
+                _profile_row(
+                    "Timing debug",
+                    timing_started,
+                    f"{timing_debug.get('matched_pairs_count', 0)} matched pairs.",
+                )
+            )
+
+        if progress is not None:
+            progress(0.82, desc="Building summary plots")
+        plots_started = time.perf_counter()
+        if reference_contour is not None:
             pitch_plot = _save_plot(
                 plot_contour_comparison(
-                    reference_extraction.contour,
+                    reference_contour,
                     previous_contour,
                     current_contour,
                 ),
@@ -1915,7 +2749,7 @@ def run_evaluation(
             )
             coverage_plot = _save_plot(
                 plot_contour_voiced_coverage(
-                    reference_extraction.contour,
+                    reference_contour,
                     previous_contour,
                     current_contour,
                 ),
@@ -1930,8 +2764,8 @@ def run_evaluation(
                 plot_voiced_coverage(baseline, previous_contour, current_contour),
                 "gradio_evaluation_coverage.png",
             )
+        profile_rows.append(_profile_row("Summary plots", plots_started, "Pitch and coverage plots."))
 
-        elapsed = time.perf_counter() - started
         metrics = pd.DataFrame(
             [
                 {"metric": "overall", "value": score.overall_score},
@@ -1941,13 +2775,15 @@ def run_evaluation(
                 {"metric": "timing", "value": score.timing_score},
             ]
         )
-        status = f"Evaluation complete in {elapsed:.2f}s. Verdict: {verdict}."
-        warnings = "\n".join(score.warnings)
-        if warnings:
-            status = f"{status}\n\nWarnings:\n{warnings}"
+        stability_plot, stability_table, stability_debug = _build_stability_diagnostics(
+            reference_contour=reference_contour,
+            current_contour=current_contour,
+            score=score,
+            stability_penalty=active_stability_penalty,
+        )
         if progress is not None:
-            progress(1.0, desc="Done")
-        workflow = "Evaluation complete. Next: optional step 4 (song/section matching)."
+            progress(0.90, desc="Building diagnostics")
+        diagnostics_started = time.perf_counter()
         diagnostics = _build_evaluation_diagnostics(
             reference_mode=reference_mode,
             reference_path=reference_path,
@@ -1955,15 +2791,39 @@ def run_evaluation(
             previous_path=previous_path,
             current_contour=current_contour,
             previous_contour=previous_contour,
-            reference_contour=reference_extraction.contour if reference_extraction is not None else None,
+            reference_contour=reference_contour,
             score=score,
             timing_debug=timing_debug,
+            raw_plot_paths=raw_plot_paths,
         )
+        profile_rows.append(
+            _profile_row(
+                "Diagnostics",
+                diagnostics_started,
+                "Tables, previews, cached raw/clean plots, and alignment audio.",
+            )
+        )
+        elapsed = time.perf_counter() - started
+        profile_rows.append(
+            {"stage": "Evaluation total", "elapsed_s": round(elapsed, 2), "notes": f"Verdict: {verdict}."}
+        )
+
+        status = f"Evaluation complete in {elapsed:.2f}s. Verdict: {verdict}."
+        warnings = "\n".join(score.warnings)
+        if warnings:
+            status = f"{status}\n\nWarnings:\n{warnings}"
+        if progress is not None:
+            progress(1.0, desc="Done")
+        workflow = "Full-song evaluation complete. Next: optional Step 5 (song/section matching)."
         return (
             status,
             metrics,
             pitch_plot,
             coverage_plot,
+            stability_plot,
+            stability_table,
+            stability_debug,
+            _profile_table(profile_rows),
             *diagnostics,
             details,
             workflow,
@@ -2125,7 +2985,7 @@ def run_matching(
             steps,
             *diagnostics,
             result.to_dict(),
-            "Matching complete. Workflow finished.",
+            "Step 5 matching complete. Matched-section handoff score is shown here for now.",
         )
     except Exception as exc:
         message = f"Matching failed after {time.perf_counter() - started:.2f}s: {exc}"
@@ -3052,6 +3912,7 @@ playback checkpoints for local research testing.
         with gr.Tabs():
             with gr.Tab("Scoring Model"):
                 prepared_state = gr.State({})
+                contour_state = gr.State(_empty_contour_state())
         
                 workflow_status = gr.Markdown("### Workflow: Step 1 not started.")
                 with gr.Accordion("Step 1 - Import & Preview Files", open=True):
@@ -3154,26 +4015,27 @@ playback checkpoints for local research testing.
                         ],
                     )
         
-                with gr.Accordion("Step 3 - Evaluate Singing", open=False):
-                    step3_status = gr.Markdown()
+                with gr.Accordion("Step 3 - Pitch & Alignment Debug", open=False):
+                    gr.Markdown(
+                        "Use this step to inspect pitch extraction and global-offset alignment before running the full-song score."
+                    )
                     reference_mode = gr.Radio(
                         ["Demo symbolic baseline", "Uploaded reference audio"],
                         value="Demo symbolic baseline",
                         label="Reference mode",
                     )
-                    evaluation_button = gr.Button("Run Evaluation", variant="primary")
+                    with gr.Row():
+                        contour_button = gr.Button("Extract Pitch Contours")
+                        alignment_only_button = gr.Button("Run Audible Alignment Check Only")
+                    contour_status = gr.Markdown()
+                    alignment_only_status = gr.Markdown()
                     with gr.Tabs():
-                        with gr.Tab("Results"):
-                            evaluation_metrics = gr.Dataframe(label="Evaluation Metrics")
-                            with gr.Row():
-                                pitch_plot = gr.Image(label="Pitch plot", type="filepath")
-                                coverage_plot = gr.Image(label="Coverage plot", type="filepath")
-                            evaluation_json = gr.JSON(label="Evaluation Details")
-                        with gr.Tab("Inside the evaluator"):
+                        with gr.Tab("Debug artifacts"):
+                            evaluation_profile_table = gr.Dataframe(label="Latest action timing / profile", wrap=True)
                             evaluation_steps = gr.Dataframe(label="Eight internal steps", wrap=True)
                             with gr.Accordion("1. Prepared analysis audio", open=True):
                                 gr.Markdown(
-                                    "**?** This shows the exact audio Step 3 scored. If Step 2 used Demucs, these are the prepared/stem files, not necessarily the original uploads."
+                                    "**?** This shows the exact audio Step 4 full-song evaluation scores. If Step 2 used Demucs, these are the prepared/stem files, not necessarily the original uploads."
                                 )
                                 evaluation_audio_table = gr.Dataframe(label="Audio selected for evaluation")
                                 with gr.Row():
@@ -3227,7 +4089,7 @@ playback checkpoints for local research testing.
                                     )
                             with gr.Accordion("5. Full-track alignment", open=True):
                                 gr.Markdown(
-                                    "**?** Step 3 currently compares the full reference against the full current take. This can punish late starts or extra silence more than matched-section scoring."
+                                    "**?** Step 4 compares the full reference against the full current take. This can punish late starts or extra silence more than matched-section scoring."
                                 )
                                 eval_alignment_plot = gr.Image(
                                     label="Full-track DTW alignment",
@@ -3237,14 +4099,39 @@ playback checkpoints for local research testing.
                                     label="Full-track pitch normalization",
                                     type="filepath",
                                 )
-                            with gr.Accordion("6-8. Metrics and final score", open=True):
+                                gr.Markdown(
+                                    "**Audible alignment check.** These clips use the scorer's global timing offset only. They are not DTW time-warped, so a bad-sounding pair is a useful signal that the full-track scorer is comparing the wrong region."
+                                )
+                                with gr.Row():
+                                    eval_aligned_reference_audio = gr.Audio(
+                                        label="Offset-aligned reference excerpt",
+                                        type="filepath",
+                                        interactive=False,
+                                    )
+                                    eval_aligned_current_audio = gr.Audio(
+                                        label="Offset-aligned current excerpt",
+                                        type="filepath",
+                                        interactive=False,
+                                    )
+                                with gr.Row():
+                                    eval_alignment_ab_audio = gr.Audio(
+                                        label="A/B: reference then current",
+                                        type="filepath",
+                                        interactive=False,
+                                    )
+                                    eval_alignment_mix_audio = gr.Audio(
+                                        label="Overlay mix",
+                                        type="filepath",
+                                        interactive=False,
+                                    )
+                            with gr.Accordion("6-8. Full-song metrics and final score", open=True):
                                 gr.Markdown(
                                     "**?** This table maps each score back to the signal that created it, so low timing/stability/pitch values can be debugged directly."
                                 )
                                 evaluation_timing_debug = gr.JSON(label="Timing debug")
                                 evaluation_score_breakdown = gr.Dataframe(label="Score breakdown", wrap=True)
-                    evaluation_button.click(
-                        run_evaluation,
+                    contour_button.click(
+                        run_contour_extraction,
                         inputs=[
                             reference_mode,
                             reference_audio,
@@ -3253,10 +4140,88 @@ playback checkpoints for local research testing.
                             prepared_state,
                         ],
                         outputs=[
-                            step3_status,
+                            contour_state,
+                            contour_status,
+                            evaluation_profile_table,
+                            eval_reference_raw_plot,
+                            eval_current_raw_plot,
+                            eval_previous_raw_plot,
+                            workflow_status,
+                        ],
+                    )
+                    alignment_only_button.click(
+                        run_alignment_check_only,
+                        inputs=[
+                            reference_mode,
+                            reference_audio,
+                            current_take,
+                            previous_take,
+                            prepared_state,
+                            contour_state,
+                        ],
+                        outputs=[
+                            contour_state,
+                            alignment_only_status,
+                            evaluation_profile_table,
+                            eval_alignment_plot,
+                            eval_normalization_plot,
+                            eval_aligned_reference_audio,
+                            eval_aligned_current_audio,
+                            eval_alignment_ab_audio,
+                            eval_alignment_mix_audio,
+                            evaluation_timing_debug,
+                            workflow_status,
+                        ],
+                    )
+
+                with gr.Accordion("Step 4 - Full Song Evaluation", open=False):
+                    full_eval_status = gr.Markdown()
+                    with gr.Accordion("Scoring parameters", open=False):
+                        full_eval_stability_penalty = gr.Slider(
+                            0.10,
+                            1.50,
+                            value=CONTOUR_SCORE_KWARGS["stability_penalty"],
+                            step=0.05,
+                            label="Stability penalty",
+                        )
+                    evaluation_button = gr.Button("Run Full Song Evaluation", variant="primary")
+                    with gr.Tabs():
+                        with gr.Tab("Results"):
+                            evaluation_metrics = gr.Dataframe(label="Full-song evaluation metrics")
+                            with gr.Row():
+                                pitch_plot = gr.Image(label="Pitch plot", type="filepath")
+                                coverage_plot = gr.Image(label="Coverage plot", type="filepath")
+                            evaluation_json = gr.JSON(label="Evaluation details")
+                        with gr.Tab("Stability diagnostics"):
+                            stability_residual_plot = gr.Image(
+                                label="Residual pitch error after global offset",
+                                type="filepath",
+                            )
+                            stability_calibration_table = gr.Dataframe(
+                                label="Stability penalty calibration",
+                                wrap=True,
+                            )
+                            stability_diagnostics_json = gr.JSON(label="Stability diagnostics")
+                    evaluation_button.click(
+                        run_evaluation,
+                        inputs=[
+                            reference_mode,
+                            reference_audio,
+                            current_take,
+                            previous_take,
+                            prepared_state,
+                            contour_state,
+                            full_eval_stability_penalty,
+                        ],
+                        outputs=[
+                            full_eval_status,
                             evaluation_metrics,
                             pitch_plot,
                             coverage_plot,
+                            stability_residual_plot,
+                            stability_calibration_table,
+                            stability_diagnostics_json,
+                            evaluation_profile_table,
                             evaluation_steps,
                             evaluation_audio_table,
                             eval_reference_audio,
@@ -3270,15 +4235,19 @@ playback checkpoints for local research testing.
                             eval_previous_raw_plot,
                             eval_alignment_plot,
                             eval_normalization_plot,
+                            eval_aligned_reference_audio,
+                            eval_aligned_current_audio,
+                            eval_alignment_ab_audio,
+                            eval_alignment_mix_audio,
                             evaluation_score_breakdown,
                             evaluation_timing_debug,
                             evaluation_json,
                             workflow_status,
                         ],
                     )
-        
-                with gr.Accordion("Step 4 - Match Song / Section", open=False):
-                    step4_status = gr.Markdown()
+
+                with gr.Accordion("Step 5 - Match Song / Section", open=False):
+                    step5_status = gr.Markdown()
                     catalog_source = gr.Radio(
                         ["Demo catalog", "Uploaded reference sections"],
                         value="Demo catalog",
@@ -3387,7 +4356,7 @@ playback checkpoints for local research testing.
                         run_matching,
                         inputs=[catalog_source, reference_audio, current_take, prepared_state],
                         outputs=[
-                            step4_status,
+                            step5_status,
                             match_table,
                             match_plot,
                             handoff_metrics,

@@ -10,7 +10,9 @@ from konopro_research.baseline import (
     write_baseline_csv,
 )
 from konopro_research.contour_scoring import (
+    compare_takes_to_reference_contour_global_offset,
     compare_takes_to_reference_contour,
+    score_take_against_reference_contour_global_offset,
     score_take_against_reference_contour,
 )
 from konopro_research.fingerprint_diagnostics import (
@@ -57,6 +59,7 @@ __all__ = [
     "baseline_to_csv_text",
     "baseline_to_rows",
     "build_demo_section_catalog",
+    "compare_takes_to_reference_contour_global_offset",
     "compare_takes_to_reference_contour",
     "compare_takes",
     "diagnose_fingerprint_rows",
@@ -65,6 +68,7 @@ __all__ = [
     "match_query_to_sections",
     "segment_long_recording",
     "segment_recognized_windows",
+    "score_take_against_reference_contour_global_offset",
     "score_take_against_reference_contour",
     "score_matched_section_progress",
     "score_take",

@@ -118,6 +118,133 @@ def score_take_against_reference_contour(
     )
 
 
+def score_take_against_reference_contour_global_offset(
+    take: TakeInput,
+    reference: PitchContour,
+    *,
+    name: str = "take",
+    take_audio_path: str | Path | None = None,
+    pitch_kwargs: dict[str, object] | None = None,
+    clean_kwargs: dict[str, object] | None = None,
+    dtw_time_weight: float = 20.0,
+    dtw_band_radius: float = 0.06,
+    max_dtw_frames: int = 2400,
+    pitch_error_penalty: float = 0.70,
+    stability_penalty: float = 1.10,
+    timing_penalty: float = 90.0,
+    transposition_warning_cents: float = 90.0,
+) -> ScoreResult:
+    """Score a take by estimating one global offset, then comparing same-time frames.
+
+    DTW is used only to estimate the global timing offset and timing-drift diagnostic.
+    Pitch accuracy, stability, and coverage are computed from 1:1 frames after applying
+    that single offset.
+    """
+    reference = clean_pitch_contour(reference, **(clean_kwargs or {}))
+    take_contour, audio = _as_pitch_contour(take, name=name, pitch_kwargs=pitch_kwargs)
+    take_contour = clean_pitch_contour(take_contour, **(clean_kwargs or {}))
+    if audio is None and take_audio_path is not None:
+        audio, _ = load_audio(take_audio_path)
+
+    warnings: list[str] = []
+    alignment = _align_voiced_contours(
+        reference,
+        take_contour,
+        time_weight=dtw_time_weight,
+        band_radius=dtw_band_radius,
+        max_frames=max_dtw_frames,
+    )
+    if alignment is None:
+        confidence = estimate_recording_confidence(audio, take_contour)
+        warnings.extend(confidence.reasons)
+        warnings.append("not enough voiced pitch frames for reliable global-offset scoring")
+        return _empty_score(
+            take_contour,
+            reference,
+            confidence.score,
+            confidence.level,
+            tuple(dict.fromkeys(warnings)),
+        )
+
+    timing_deltas = alignment.take_times_s - alignment.reference_times_s
+    global_offset_s = float(np.nanmedian(timing_deltas))
+    local_timing_errors = timing_deltas - global_offset_s
+    median_abs_timing_error = float(np.nanmedian(np.abs(local_timing_errors)))
+    timing_score = _clamp_score(100.0 - median_abs_timing_error * timing_penalty)
+
+    take_hz_at_reference_times, take_available = _sample_contour_nearest(
+        take_contour,
+        reference.times_s + global_offset_s,
+    )
+    reference_expected = reference.voiced_mask
+    matched = reference_expected & take_available & np.isfinite(take_hz_at_reference_times)
+    matched &= take_hz_at_reference_times > 0
+    reference_voiced = int(np.count_nonzero(reference_expected))
+    matched_count = int(np.count_nonzero(matched))
+    coverage_pct = 100.0 * matched_count / max(1, reference_voiced)
+    coverage_score = _clamp_score(coverage_pct)
+
+    if matched_count < 3:
+        mean_error = 999.0
+        estimated_transposition = 0.0
+        stability_cents = 999.0
+        pitch_score = 0.0
+        stability_score = 0.0
+        warnings.append("not enough same-time voiced frames for reliable global-offset pitch scoring")
+    else:
+        ref_midi = hz_to_midi(reference.frequencies_hz[matched])
+        take_midi = hz_to_midi(take_hz_at_reference_times[matched])
+        signed_errors = (take_midi - ref_midi) * 100.0
+        estimated_transposition = float(np.nanmedian(signed_errors))
+        abs_errors = np.abs(signed_errors)
+        mean_error = float(np.nanmean(abs_errors))
+        pitch_score = _clamp_score(100.0 - mean_error * pitch_error_penalty)
+
+        residual_errors = signed_errors - estimated_transposition
+        stability_cents = float(np.nanstd(residual_errors))
+        stability_score = _clamp_score(100.0 - stability_cents * stability_penalty)
+
+    confidence = estimate_recording_confidence(audio, take_contour)
+    warnings.extend(confidence.reasons)
+    if confidence.level == "low":
+        warnings.append("recording confidence is low; interpret score carefully")
+    if abs(estimated_transposition) >= transposition_warning_cents:
+        semitone_shift = round(estimated_transposition / 100.0)
+        warnings.append(
+            f"take appears shifted by about {semitone_shift:+d} semitone(s); check key/transposition"
+        )
+    take_duration = _contour_duration(take_contour)
+    reference_duration = _contour_duration(reference)
+    if reference_duration > 0 and abs(take_duration - reference_duration) > max(2.0, reference_duration * 0.25):
+        warnings.append("take duration differs from reference; trim files to the same section")
+
+    song_correctness = 0.60 * pitch_score + 0.20 * coverage_score + 0.20 * timing_score
+    technical_control = 0.70 * stability_score + 0.30 * confidence.score * 100.0
+    overall = 0.50 * pitch_score + 0.20 * stability_score + 0.15 * coverage_score + 0.15 * timing_score
+
+    return ScoreResult(
+        overall_score=round(float(overall), 2),
+        song_correctness_score=round(float(song_correctness), 2),
+        technical_control_score=round(float(technical_control), 2),
+        pitch_accuracy_score=round(float(pitch_score), 2),
+        timing_score=round(float(timing_score), 2),
+        stability_score=round(float(stability_score), 2),
+        coverage_score=round(float(coverage_score), 2),
+        mean_pitch_error_cents=round(float(mean_error), 2),
+        estimated_transposition_cents=round(float(estimated_transposition), 2),
+        pitch_stability_cents=round(float(stability_cents), 2),
+        note_coverage_pct=round(float(coverage_pct), 2),
+        timing_offset_s=round(float(global_offset_s), 3),
+        take_duration_s=round(float(take_duration), 3),
+        baseline_duration_s=round(float(reference_duration), 3),
+        recording_confidence_score=round(float(confidence.score * 100.0), 2),
+        recording_confidence_level=confidence.level,
+        covered_notes=matched_count,
+        total_notes=reference_voiced,
+        warnings=tuple(dict.fromkeys(warnings)),
+    )
+
+
 def compare_takes_to_reference_contour(
     previous: TakeInput,
     current: TakeInput,
@@ -126,6 +253,58 @@ def compare_takes_to_reference_contour(
 ) -> ComparisonResult:
     previous_score = score_take_against_reference_contour(previous, reference, name="previous", **score_kwargs)
     current_score = score_take_against_reference_contour(current, reference, name="current", **score_kwargs)
+
+    overall_delta = round(current_score.overall_score - previous_score.overall_score, 2)
+    pitch_delta = round(current_score.pitch_accuracy_score - previous_score.pitch_accuracy_score, 2)
+    stability_delta = round(current_score.stability_score - previous_score.stability_score, 2)
+    coverage_delta = round(current_score.coverage_score - previous_score.coverage_score, 2)
+    timing_delta = round(current_score.timing_score - previous_score.timing_score, 2)
+
+    if overall_delta >= 5:
+        verdict = "improved"
+    elif overall_delta <= -5:
+        verdict = "declined"
+    else:
+        verdict = "roughly unchanged"
+
+    feedback_by_category = _feedback_by_category(previous_score, current_score)
+    return ComparisonResult(
+        previous=previous_score,
+        current=current_score,
+        overall_delta=overall_delta,
+        pitch_accuracy_delta=pitch_delta,
+        stability_delta=stability_delta,
+        coverage_delta=coverage_delta,
+        timing_delta=timing_delta,
+        verdict=verdict,
+        feedback=tuple(message for messages in feedback_by_category.values() for message in messages),
+        feedback_by_category=feedback_by_category,
+    )
+
+
+def compare_takes_to_reference_contour_global_offset(
+    previous: TakeInput,
+    current: TakeInput,
+    reference: PitchContour,
+    *,
+    previous_audio_path: str | Path | None = None,
+    current_audio_path: str | Path | None = None,
+    **score_kwargs: object,
+) -> ComparisonResult:
+    previous_score = score_take_against_reference_contour_global_offset(
+        previous,
+        reference,
+        name="previous",
+        take_audio_path=previous_audio_path,
+        **score_kwargs,
+    )
+    current_score = score_take_against_reference_contour_global_offset(
+        current,
+        reference,
+        name="current",
+        take_audio_path=current_audio_path,
+        **score_kwargs,
+    )
 
     overall_delta = round(current_score.overall_score - previous_score.overall_score, 2)
     pitch_delta = round(current_score.pitch_accuracy_score - previous_score.pitch_accuracy_score, 2)
@@ -296,6 +475,41 @@ def _as_pitch_contour(
 def _voiced_sequence(contour: PitchContour) -> tuple[np.ndarray, np.ndarray]:
     mask = contour.voiced_mask
     return contour.times_s[mask], contour.frequencies_hz[mask]
+
+
+def _sample_contour_nearest(
+    contour: PitchContour,
+    target_times_s: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    target_times = np.asarray(target_times_s, dtype=float)
+    sampled = np.full(target_times.shape, np.nan, dtype=float)
+    available = np.zeros(target_times.shape, dtype=bool)
+    if contour.times_s.size == 0 or target_times.size == 0:
+        return sampled, available
+
+    indices = np.searchsorted(contour.times_s, target_times)
+    right = np.clip(indices, 0, contour.times_s.size - 1)
+    left = np.clip(indices - 1, 0, contour.times_s.size - 1)
+    left_distance = np.abs(target_times - contour.times_s[left])
+    right_distance = np.abs(target_times - contour.times_s[right])
+    nearest = np.where(left_distance <= right_distance, left, right)
+    nearest_distance = np.minimum(left_distance, right_distance)
+
+    frame_step = _median_frame_step(contour)
+    max_distance = max(frame_step * 1.5, 1e-6)
+    available = nearest_distance <= max_distance
+    sampled[available] = contour.frequencies_hz[nearest[available]]
+    return sampled, available
+
+
+def _median_frame_step(contour: PitchContour) -> float:
+    if contour.times_s.size < 2:
+        return 0.02
+    diffs = np.diff(np.sort(contour.times_s))
+    diffs = diffs[np.isfinite(diffs) & (diffs > 0)]
+    if diffs.size == 0:
+        return 0.02
+    return float(np.nanmedian(diffs))
 
 
 def _thin_sequence(
