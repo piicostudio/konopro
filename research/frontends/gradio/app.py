@@ -76,9 +76,12 @@ DEMO_PATHS = ensure_demo_data(RESEARCH_ROOT / "data" / "demo")
 STEM_CACHE_DIR = RESEARCH_ROOT / ".cache" / "stems"
 OUTPUT_DIR = RESEARCH_ROOT / ".cache" / "gradio_outputs"
 DEREVERB_CACHE_DIR = RESEARCH_ROOT / ".cache" / "dereverb"
+PITCH_CONTOUR_CACHE_DIR = RESEARCH_ROOT / ".cache" / "pitch_contours"
+PITCH_CONTOUR_CACHE_VERSION = 1
 MAX_REQUEST_WINDOW_PREVIEWS = 40
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 DEREVERB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+PITCH_CONTOUR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 PITCH_KWARGS = {
@@ -1272,9 +1275,7 @@ def _normalize_preview_audio(audio: np.ndarray, *, target_peak: float = 0.85) ->
 def _raw_clean_plot_for_path(path: str | None, title: str, filename: str) -> str | None:
     if not path:
         return None
-    audio, sample_rate = load_audio(path)
-    raw = extract_pitch(audio, sample_rate, name=title, **PITCH_KWARGS)
-    cleaned = clean_pitch_contour(raw, **CLEAN_KWARGS)
+    raw, cleaned, _ = _load_or_extract_pitch_contours(path, name=title)
     return _save_raw_clean_plot(raw, cleaned, title, filename)
 
 
@@ -1302,15 +1303,96 @@ def _extract_clean_contour_with_plot(
     stage: str,
 ) -> tuple[PitchContour, str, dict[str, Any]]:
     started = time.perf_counter()
-    audio, sample_rate = load_audio(path)
-    raw = extract_pitch(audio, sample_rate, name=name, **PITCH_KWARGS)
-    cleaned = clean_pitch_contour(raw, **CLEAN_KWARGS)
+    raw, cleaned, cache_status = _load_or_extract_pitch_contours(path, name=name)
     plot_path = _save_raw_clean_plot(raw, cleaned, title, filename)
     notes = (
         f"{Path(path).name}; "
-        f"{_voiced_frame_count(cleaned)} voiced frames over {_contour_duration_s(cleaned):.2f}s"
+        f"{_voiced_frame_count(cleaned)} voiced frames over {_contour_duration_s(cleaned):.2f}s; "
+        f"{cache_status}"
     )
     return cleaned, plot_path, _profile_row(stage, started, notes)
+
+
+def _load_or_extract_pitch_contours(path: str, *, name: str) -> tuple[PitchContour, PitchContour, str]:
+    cache_path, cache_key = _pitch_contour_cache_path(path)
+    cached = _load_cached_pitch_contours(cache_path, name=name)
+    if cached is not None:
+        raw, cleaned = cached
+        return raw, cleaned, f"cache hit {cache_key}"
+
+    audio, sample_rate = load_audio(path)
+    raw = extract_pitch(audio, sample_rate, name=name, **PITCH_KWARGS)
+    cleaned = clean_pitch_contour(raw, **CLEAN_KWARGS)
+    _write_cached_pitch_contours(cache_path, raw, cleaned, source_path=path, cache_key=cache_key)
+    return raw, cleaned, f"computed and cached {cache_key}"
+
+
+def _pitch_contour_cache_path(path: str) -> tuple[Path, str]:
+    payload = {
+        "version": PITCH_CONTOUR_CACHE_VERSION,
+        "source_hash": _sha256_file(path),
+        "pitch_kwargs": PITCH_KWARGS,
+        "clean_kwargs": CLEAN_KWARGS,
+    }
+    encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
+    cache_key = hashlib.sha256(encoded).hexdigest()[:24]
+    return PITCH_CONTOUR_CACHE_DIR / f"{cache_key}.npz", cache_key
+
+
+def _load_cached_pitch_contours(
+    cache_path: Path,
+    *,
+    name: str,
+) -> tuple[PitchContour, PitchContour] | None:
+    if not cache_path.exists():
+        return None
+    try:
+        with np.load(cache_path, allow_pickle=False) as data:
+            raw = PitchContour(
+                data["raw_times_s"],
+                data["raw_frequencies_hz"],
+                data["raw_confidence"],
+                name=name,
+            )
+            cleaned = PitchContour(
+                data["cleaned_times_s"],
+                data["cleaned_frequencies_hz"],
+                data["cleaned_confidence"],
+                name=name,
+            )
+        return raw, cleaned
+    except Exception:
+        return None
+
+
+def _write_cached_pitch_contours(
+    cache_path: Path,
+    raw: PitchContour,
+    cleaned: PitchContour,
+    *,
+    source_path: str,
+    cache_key: str,
+) -> None:
+    metadata = {
+        "cache_key": cache_key,
+        "version": PITCH_CONTOUR_CACHE_VERSION,
+        "source_path": str(source_path),
+        "pitch_kwargs": PITCH_KWARGS,
+        "clean_kwargs": CLEAN_KWARGS,
+        "created_at": time.time(),
+    }
+    tmp_path = cache_path.with_suffix(".tmp.npz")
+    np.savez_compressed(
+        tmp_path,
+        metadata=json.dumps(metadata, sort_keys=True),
+        raw_times_s=raw.times_s,
+        raw_frequencies_hz=raw.frequencies_hz,
+        raw_confidence=raw.confidence,
+        cleaned_times_s=cleaned.times_s,
+        cleaned_frequencies_hz=cleaned.frequencies_hz,
+        cleaned_confidence=cleaned.confidence,
+    )
+    tmp_path.replace(cache_path)
 
 
 def _extract_evaluation_contours(
@@ -2993,13 +3075,8 @@ def run_matching(
 
 
 def _extract_clean_contour(path: str, name: str):
-    from konopro_research.audio_io import load_audio
-
-    audio, sample_rate = load_audio(path)
-    return clean_pitch_contour(
-        extract_pitch(audio, sample_rate, name=name, **PITCH_KWARGS),
-        **CLEAN_KWARGS,
-    )
+    _, cleaned, _ = _load_or_extract_pitch_contours(path, name=name)
+    return cleaned
 
 
 def _save_plot(fig: Any, filename: str) -> str:
