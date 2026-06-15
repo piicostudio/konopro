@@ -9,11 +9,17 @@
   var audioPreviewUrls = {
     take: null
   };
+  var defaultGoogleDbUrl = "https://script.google.com/macros/s/AKfycbw2aSa60f7B-wMBQlspwdNHi8w2iHTQ-tLouwVdMP7ddPomE_TYBPcM1iNQgRHpeLyoYw/exec";
   var storageKeys = {
     apiBaseUrl: "konopro.apiBaseUrl",
     betaUserKey: "konopro.betaUserKey",
+    googleDbUrl: "konopro.googleDbUrl",
+    analyticsSessionId: "konopro.analyticsSessionId",
+    analyticsQueue: "konopro.analyticsQueue",
     workflowAnswers: "konopro.workflowQuestionAnswers"
   };
+  var analyticsQueueLimit = 80;
+  var trackedSectionEvents = {};
   var questionNames = ["karaokeUse", "deviceContext", "appInstall", "resultPriority"];
   var processingStages = [
     {
@@ -45,6 +51,7 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     cacheElements();
+    initStoredSettings();
     initLandingInteractions();
     initScoringConsole();
   });
@@ -63,6 +70,7 @@
       healthStatus: document.getElementById("healthStatus"),
       apiBaseUrl: document.getElementById("apiBaseUrl"),
       betaUserKey: document.getElementById("betaUserKey"),
+      googleDbUrl: document.getElementById("googleDbUrl"),
       analysisForm: document.getElementById("analysisForm"),
       youtubeUrl: document.getElementById("youtubeUrl"),
       takeAudioCard: document.querySelector('[data-audio-card="take"]'),
@@ -127,11 +135,25 @@
     };
   }
 
+  function initStoredSettings() {
+    if (elements.apiBaseUrl) {
+      elements.apiBaseUrl.value = localStorage.getItem(storageKeys.apiBaseUrl) || "http://127.0.0.1:8000";
+    }
+    if (elements.betaUserKey) {
+      elements.betaUserKey.value = localStorage.getItem(storageKeys.betaUserKey) || defaultTesterId();
+    }
+    if (elements.googleDbUrl) {
+      elements.googleDbUrl.value = localStorage.getItem(storageKeys.googleDbUrl) || defaultGoogleDbUrl;
+    }
+    persistSettings();
+  }
+
   function initLandingInteractions() {
     initSidebar();
     initRevealAnimations();
     initBuilderPreview();
     initSettingsModal();
+    initAnalytics();
     initModal();
     initWaitlistForm();
     initActiveNav();
@@ -215,6 +237,233 @@
         activate(step.getAttribute("data-preview"));
       });
     });
+  }
+
+  function initAnalytics() {
+    ensureAnalyticsSessionId();
+    initSectionAnalytics();
+    initFeatureAnalytics();
+    initCtaAnalytics();
+    flushAnalyticsQueue();
+    window.addEventListener("online", flushAnalyticsQueue);
+    window.addEventListener("pagehide", flushAnalyticsQueue);
+  }
+
+  function initSectionAnalytics() {
+    var sectionEvents = [
+      { id: "hero", event: "site_hero", section: "site_hero" },
+      { id: "problem", event: "site_problem", section: "site_problem" },
+      { id: "solution", event: "site_corefeature", section: "site_corefeature" },
+      { id: "analyze", event: "site_MVP", section: "site_MVP" },
+      { id: "cta-bottom", event: "site_CTA", section: "site_CTA" }
+    ];
+
+    trackSectionOnce("site_hero", "site_hero");
+
+    if (!("IntersectionObserver" in window)) {
+      return;
+    }
+
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) {
+          return;
+        }
+        var match = sectionEvents.find(function (item) {
+          return item.id === entry.target.id;
+        });
+        if (match) {
+          trackSectionOnce(match.event, match.section);
+        }
+      });
+    }, { rootMargin: "-30% 0px -45% 0px", threshold: 0.12 });
+
+    sectionEvents.forEach(function (item) {
+      var node = document.getElementById(item.id);
+      if (node) {
+        observer.observe(node);
+      }
+    });
+  }
+
+  function initFeatureAnalytics() {
+    document.querySelectorAll(".builder-step[data-preview]").forEach(function (step) {
+      var previewId = step.getAttribute("data-preview");
+      var hoverEvent = "hover_corefeature_" + previewId;
+      var clickEvent = "click_corefeature_" + previewId;
+      var sectionEvent = "site_corefeature_" + previewId;
+      var hoverTracked = false;
+
+      step.addEventListener("mouseenter", function () {
+        if (hoverTracked) {
+          return;
+        }
+        hoverTracked = true;
+        trackEvent(hoverEvent, "site_corefeature", { feature_id: previewId });
+        trackSectionOnce(sectionEvent, "site_corefeature", { feature_id: previewId, trigger: "hover" });
+      });
+
+      step.addEventListener("click", function () {
+        trackEvent(clickEvent, "site_corefeature", { feature_id: previewId });
+        trackSectionOnce(sectionEvent, "site_corefeature", { feature_id: previewId, trigger: "click" });
+      });
+
+      step.addEventListener("focus", function () {
+        trackSectionOnce(sectionEvent, "site_corefeature", { feature_id: previewId, trigger: "focus" });
+      });
+    });
+  }
+
+  function initCtaAnalytics() {
+    document.querySelectorAll("[data-event]").forEach(function (node) {
+      node.addEventListener("click", function () {
+        trackEvent(node.getAttribute("data-event"), node.getAttribute("data-section") || inferSection(node), {
+          label: node.textContent.trim()
+        });
+      });
+    });
+  }
+
+  function trackSectionOnce(eventName, section, metadata) {
+    if (trackedSectionEvents[eventName]) {
+      return;
+    }
+    trackedSectionEvents[eventName] = true;
+    trackEvent(eventName, section, metadata || {});
+  }
+
+  function trackEvent(eventName, section, metadata) {
+    if (!eventName) {
+      return;
+    }
+
+    var eventPayload = {
+      event_id: "evt-" + Math.random().toString(36).slice(2, 10) + "-" + Date.now().toString(36),
+      timestamp: new Date().toISOString(),
+      session_id: ensureAnalyticsSessionId(),
+      tester_id: betaUserKey(),
+      event_name: eventName,
+      section: section || "site",
+      page_url: window.location.href,
+      path: window.location.pathname + window.location.hash,
+      user_agent: window.navigator.userAgent,
+      metadata: metadata || {}
+    };
+
+    enqueueAnalyticsEvent(eventPayload);
+    flushAnalyticsQueue();
+  }
+
+  function ensureAnalyticsSessionId() {
+    var sessionId = localStorage.getItem(storageKeys.analyticsSessionId);
+    if (!sessionId) {
+      sessionId = "site-" + Math.random().toString(36).slice(2, 8) + "-" + Date.now().toString(36);
+      localStorage.setItem(storageKeys.analyticsSessionId, sessionId);
+    }
+    return sessionId;
+  }
+
+  function enqueueAnalyticsEvent(eventPayload) {
+    var queue = readAnalyticsQueue();
+    queue.push(eventPayload);
+    if (queue.length > analyticsQueueLimit) {
+      queue = queue.slice(queue.length - analyticsQueueLimit);
+    }
+    writeAnalyticsQueue(queue);
+  }
+
+  function flushAnalyticsQueue() {
+    var endpoint = googleDbUrl();
+    if (!endpoint) {
+      return;
+    }
+
+    var queue = readAnalyticsQueue();
+    if (!queue.length) {
+      return;
+    }
+
+    writeAnalyticsQueue([]);
+    queue.forEach(function (eventPayload) {
+      postAnalyticsEvent(endpoint, eventPayload).catch(function () {
+        enqueueAnalyticsEvent(eventPayload);
+      });
+    });
+  }
+
+  function postAnalyticsEvent(endpoint, eventPayload) {
+    return postGoogleDbRecord(endpoint, "event", eventPayload);
+  }
+
+  function postWaitlistRecord(email, advice) {
+    var endpoint = googleDbUrl();
+    if (!endpoint) {
+      return Promise.reject(new Error("Google DB URL is not configured."));
+    }
+
+    return postGoogleDbRecord(endpoint, "waitlist", {
+      timestamp: new Date().toISOString(),
+      session_id: ensureAnalyticsSessionId(),
+      tester_id: betaUserKey(),
+      email: email,
+      advice: advice || "",
+      page_url: window.location.href,
+      path: window.location.pathname + window.location.hash
+    });
+  }
+
+  function postGoogleDbRecord(endpoint, type, payload) {
+    return fetch(endpoint, {
+      method: "POST",
+      mode: "no-cors",
+      keepalive: true,
+      headers: {
+        "Content-Type": "text/plain;charset=utf-8"
+      },
+      body: JSON.stringify({
+        type: type,
+        payload: payload
+      })
+    });
+  }
+
+  function readAnalyticsQueue() {
+    try {
+      return JSON.parse(localStorage.getItem(storageKeys.analyticsQueue) || "[]");
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  function writeAnalyticsQueue(queue) {
+    try {
+      localStorage.setItem(storageKeys.analyticsQueue, JSON.stringify(queue));
+    } catch (_error) {
+      // Analytics must never block the demo flow.
+    }
+  }
+
+  function inferSection(node) {
+    var section = node.closest("section");
+    if (!section) {
+      return "site";
+    }
+    if (section.id === "hero") {
+      return "site_hero";
+    }
+    if (section.id === "problem") {
+      return "site_problem";
+    }
+    if (section.id === "solution") {
+      return "site_corefeature";
+    }
+    if (section.id === "analyze") {
+      return "site_MVP";
+    }
+    if (section.id === "cta-bottom") {
+      return "site_CTA";
+    }
+    return section.id || "site";
   }
 
   function initSettingsModal() {
@@ -301,10 +550,36 @@
 
     elements.waitlistForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      elements.formFeedback.classList.remove("is-error", "is-loading");
-      elements.formFeedback.classList.add("is-success");
-      elements.formFeedback.textContent = "등록되었습니다. 출시 또는 베타테스트를 진행하면 소식을 보내드릴게요.";
-      elements.waitlistForm.reset();
+      var emailInput = elements.waitlistForm.querySelector("#email");
+      var adviceInput = elements.waitlistForm.querySelector("#advice");
+      var email = emailInput ? emailInput.value.trim() : "";
+      var advice = adviceInput ? adviceInput.value.trim() : "";
+
+      trackEvent("click_submit_email", "site_CTA", {
+        email_masked: maskEmail(email),
+        has_advice: Boolean(advice)
+      });
+
+      elements.formFeedback.classList.remove("is-error", "is-success");
+      elements.formFeedback.classList.add("is-loading");
+      elements.formFeedback.textContent = "등록 중입니다...";
+
+      postWaitlistRecord(email, advice)
+        .then(function () {
+          elements.formFeedback.classList.remove("is-error", "is-loading");
+          elements.formFeedback.classList.add("is-success");
+          elements.formFeedback.textContent = "등록되었습니다. 출시 또는 베타테스트를 진행하면 소식을 보내드릴게요.";
+          trackEvent("action_submit_email_success", "site_CTA", {
+            email_masked: maskEmail(email),
+            has_advice: Boolean(advice)
+          });
+          elements.waitlistForm.reset();
+        })
+        .catch(function (error) {
+          elements.formFeedback.classList.remove("is-loading", "is-success");
+          elements.formFeedback.classList.add("is-error");
+          elements.formFeedback.textContent = error.message || "등록에 실패했습니다. Google DB URL을 확인해주세요.";
+        });
     });
   }
 
@@ -343,8 +618,6 @@
     }
 
     elements.takeFileMeta.dataset.defaultText = elements.takeFileMeta.textContent;
-    elements.apiBaseUrl.value = localStorage.getItem(storageKeys.apiBaseUrl) || "http://127.0.0.1:8000";
-    elements.betaUserKey.value = localStorage.getItem(storageKeys.betaUserKey) || defaultTesterId();
     persistSettings();
 
     elements.healthCheckButton.addEventListener("click", checkHealth);
@@ -352,6 +625,10 @@
     elements.clearButton.addEventListener("click", resetScoringUi);
     elements.apiBaseUrl.addEventListener("change", persistSettings);
     elements.betaUserKey.addEventListener("change", persistSettings);
+    elements.googleDbUrl.addEventListener("change", function () {
+      persistSettings();
+      flushAnalyticsQueue();
+    });
     if (elements.youtubeUrlForm) {
       elements.youtubeUrlForm.addEventListener("submit", handleYoutubeUrlSubmit);
     }
@@ -365,11 +642,14 @@
     }
     if (elements.changeYoutubeButton) {
       elements.changeYoutubeButton.addEventListener("click", function () {
+        trackEvent("click_changeURL", "site_MVP", {
+          youtube_video_id: flowState.youtubeVideoId || ""
+        });
         openYoutubeModal(flowState.youtubeUrl);
       });
     }
     if (elements.workflowQuestionForm) {
-      elements.workflowQuestionForm.addEventListener("change", updateQuestionProgress);
+      elements.workflowQuestionForm.addEventListener("change", handleWorkflowQuestionChange);
     }
     document.addEventListener("keydown", function (event) {
       if (event.key === "Escape" && elements.youtubeModal && elements.youtubeModal.classList.contains("is-open")) {
@@ -397,8 +677,15 @@
   }
 
   function persistSettings() {
-    localStorage.setItem(storageKeys.apiBaseUrl, apiBaseUrl());
-    localStorage.setItem(storageKeys.betaUserKey, betaUserKey());
+    if (elements.apiBaseUrl) {
+      localStorage.setItem(storageKeys.apiBaseUrl, apiBaseUrl());
+    }
+    if (elements.betaUserKey) {
+      localStorage.setItem(storageKeys.betaUserKey, betaUserKey());
+    }
+    if (elements.googleDbUrl) {
+      localStorage.setItem(storageKeys.googleDbUrl, googleDbUrl());
+    }
   }
 
   function apiBaseUrl() {
@@ -407,6 +694,10 @@
 
   function betaUserKey() {
     return elements.betaUserKey.value.trim();
+  }
+
+  function googleDbUrl() {
+    return elements.googleDbUrl ? elements.googleDbUrl.value.trim() : "";
   }
 
   function initAudioPicker(config) {
@@ -422,6 +713,12 @@
     if (!dropzone) {
       return;
     }
+
+    dropzone.addEventListener("click", function () {
+      trackEvent("click_uploadcover_mp3", "site_MVP", {
+        picker: config.key
+      });
+    });
 
     dropzone.addEventListener("keydown", function (event) {
       if (event.key === "Enter" || event.key === " ") {
@@ -491,6 +788,11 @@
     if (config.fileSize) {
       config.fileSize.textContent = formatBytes(file.size);
     }
+    trackEvent("action_uploadcover_mp3", "site_MVP", {
+      file_extension: fileExtension(file.name),
+      file_size_bytes: file.size,
+      file_type: file.type || "unknown"
+    });
   }
 
   function resetAudioPicker(config) {
@@ -667,6 +969,10 @@
       return;
     }
 
+    trackEvent("click_next_after_uploadcover", "site_MVP", {
+      file_extension: fileExtension(takeFile.name),
+      file_size_bytes: takeFile.size
+    });
     setJobStatus("Cover uploaded locally. Add the original YouTube link next.", "good");
     openYoutubeModal(flowState.youtubeUrl);
   }
@@ -698,6 +1004,9 @@
   function handleYoutubeUrlSubmit(event) {
     event.preventDefault();
     var url = elements.youtubeModalUrl.value.trim();
+    trackEvent("click_previeworiginal", "site_MVP", {
+      has_url: Boolean(url)
+    });
     var videoId = extractYoutubeVideoId(url);
     if (!videoId) {
       elements.youtubeModalError.classList.add("is-error");
@@ -708,6 +1017,10 @@
     flowState.youtubeUrl = url;
     flowState.youtubeVideoId = videoId;
     elements.youtubeUrl.value = url;
+    trackEvent("action_paste_youtubelink", "site_MVP", {
+      youtube_video_id: videoId,
+      youtube_host: youtubeHost(url)
+    });
     renderReferenceConfirmation();
     closeYoutubeModal();
     showFlowPanel("confirm");
@@ -727,6 +1040,9 @@
   function startConfirmedAnalysis() {
     persistSettings();
     resetResult();
+    trackEvent("click_yesanalyze", "site_MVP", {
+      youtube_video_id: flowState.youtubeVideoId || ""
+    });
 
     var takeFile = elements.takeAudio.files && elements.takeAudio.files[0];
     if (!takeFile) {
@@ -758,6 +1074,11 @@
     startProcessingNarrative();
     setBusy(true);
     setJobStatus("Uploading audio and starting analysis...", "working");
+    trackEvent("action_analysis_started", "site_MVP", {
+      youtube_video_id: flowState.youtubeVideoId,
+      file_extension: fileExtension(takeFile.name),
+      file_size_bytes: takeFile.size
+    });
     fetch(apiBaseUrl() + "/v1/scoring-jobs", {
       method: "POST",
       headers: { "X-Konopro-Beta-User": betaUserKey() },
@@ -776,6 +1097,10 @@
         elements.processingHint.textContent = "The backend could not start analysis. Check the URL, backend status, and upload format.";
         failProcessingNarrative("The backend could not start analysis. Check the URL, backend status, and upload format.");
         flowState.analysisFailed = true;
+        trackEvent("action_analysis_failed", "site_MVP", {
+          stage: "start",
+          message: error.message
+        });
         tryUnlockResult();
       });
   }
@@ -797,6 +1122,11 @@
             flowState.scoringRun = payload.scoring_run;
             elements.processingHint.textContent = "Analysis finished. Complete the quick questions to unlock the result.";
             completeProcessingNarrative();
+            trackEvent("action_analysis_completed", "site_MVP", {
+              job_id: payload.job.id,
+              session_id: payload.session.id,
+              overall_score: payload.scoring_run.scores && payload.scoring_run.scores.overall_score
+            });
             tryUnlockResult();
             return;
           }
@@ -810,6 +1140,12 @@
             elements.processingHint.textContent = "Analysis failed before a score could be generated.";
             failProcessingNarrative(payload.scoring_run.error_message || payload.job.error_message || "Analysis failed before a score could be generated.");
             flowState.analysisFailed = true;
+            trackEvent("action_analysis_failed", "site_MVP", {
+              stage: "poll",
+              job_id: payload.job.id,
+              session_id: payload.session.id,
+              message: payload.scoring_run.error_message || payload.job.error_message || "Analysis failed."
+            });
             tryUnlockResult();
             return;
           }
@@ -822,9 +1158,23 @@
           elements.processingHint.textContent = "Polling failed. Check whether the backend is still running.";
           failProcessingNarrative("Polling failed. Check whether the backend is still running.");
           flowState.analysisFailed = true;
+          trackEvent("action_analysis_failed", "site_MVP", {
+            stage: "poll_request",
+            message: error.message
+          });
           tryUnlockResult();
         });
     }, 2200);
+  }
+
+  function handleWorkflowQuestionChange(event) {
+    if (event.target && event.target.name && event.target.type === "radio") {
+      trackEvent("click_surveyquestion_" + event.target.name, "site_MVP", {
+        question: event.target.name,
+        answer: event.target.value
+      });
+    }
+    updateQuestionProgress();
   }
 
   function updateQuestionProgress() {
@@ -925,6 +1275,10 @@
     elements.resultGate.classList.add("is-hidden");
     showFlowPanel("processing");
     flowState.resultRendered = true;
+    trackEvent("action_result_unlocked", "site_MVP", {
+      answered_questions: Object.keys(flowState.questionAnswers).length,
+      overall_score: flowState.scoringRun.scores && flowState.scoringRun.scores.overall_score
+    });
     renderResult(flowState.scoringRun);
     submitWorkflowFeedback();
   }
@@ -1055,6 +1409,7 @@
     elements.analysisForm.reset();
     elements.apiBaseUrl.value = localStorage.getItem(storageKeys.apiBaseUrl) || "http://127.0.0.1:8000";
     elements.betaUserKey.value = localStorage.getItem(storageKeys.betaUserKey) || defaultTesterId();
+    elements.googleDbUrl.value = localStorage.getItem(storageKeys.googleDbUrl) || defaultGoogleDbUrl;
     elements.youtubeUrl.value = "";
     if (elements.youtubeModalUrl) {
       elements.youtubeModalUrl.value = "";
@@ -1135,6 +1490,19 @@
     return "https://www.youtube.com/embed/" + encodeURIComponent(videoId);
   }
 
+  function youtubeHost(rawUrl) {
+    try {
+      return new URL(rawUrl).hostname.replace(/^www\./, "");
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function fileExtension(fileName) {
+    var match = String(fileName || "").toLowerCase().match(/\.([a-z0-9]+)$/);
+    return match ? match[1] : "";
+  }
+
   function parseResponse(response) {
     return response.text().then(function (text) {
       var payload = text ? JSON.parse(text) : {};
@@ -1172,6 +1540,16 @@
     var index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
     var value = bytes / Math.pow(1024, index);
     return value.toFixed(value >= 10 || index === 0 ? 0 : 1) + " " + units[index];
+  }
+
+  function maskEmail(email) {
+    var parts = String(email || "").split("@");
+    if (parts.length !== 2) {
+      return "";
+    }
+    var name = parts[0];
+    var domain = parts[1];
+    return name.slice(0, 2) + "***@" + domain;
   }
 
   function escapeHtml(value) {

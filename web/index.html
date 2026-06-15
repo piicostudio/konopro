@@ -1,13 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <!-- Privacy-friendly analytics by Plausible -->
-    <script async src="https://plausible.io/js/pa-vg0MIwZ9j0c-aM2kWiNau.js"></script>
-    <script>
-    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
-    plausible.init()
-    </script>
-
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="코노프로 - 코인 노래방에서 녹음한 내 보컬을 원곡 대비, 지난 테이크 대비 자동으로 분석해드리는 보컬 성장 앱.">
@@ -72,8 +65,8 @@
           코인 노래방을 내 보컬 스튜디오로. 녹음만 하면, 원곡 대비 피치와 지난 연습 대비 성장을 자동 분석합니다.
         </p>
         <div class="hero__actions reveal reveal-delay-2">
-          <a href="#analyze" class="btn btn--primary js-track-cta" data-event="cta_try_demo">분석 체험하기</a>
-          <a href="#problem" class="btn btn--outline js-track-cta" data-event="cta_score_difference">코노 점수와 뭐가 다를까요?</a>
+          <a href="#analyze" class="btn btn--primary js-track-cta" data-event="click_hero_trydemo" data-section="site_hero">분석 체험하기</a>
+          <a href="#problem" class="btn btn--outline js-track-cta" data-event="click_hero_scoredifference" data-section="site_hero">코노 점수와 뭐가 다를까요?</a>
         </div>
       </div>
     </section>
@@ -374,7 +367,7 @@
       <div class="cta-banner__content reveal">
         <h2 class="cta-banner__title">이제, 내 성장이 보일 차례</h2>
         <p class="cta-banner__text">첫달 무료 코드와 함께 베타테스터로 참여하세요.</p>
-        <button type="button" class="btn btn--primary js-track-cta js-open-reveal" data-event="cta_release_notify_banner">출시 소식 이메일로 받기</button>
+        <button type="button" class="btn btn--primary js-track-cta js-open-reveal" data-event="click_cta_button" data-section="site_CTA">출시 소식 이메일로 받기</button>
       </div>
     </section>
 
@@ -412,6 +405,11 @@
         <div class="fake-door-form__field">
           <label for="betaUserKey">Tester ID</label>
           <input id="betaUserKey" name="betaUserKey" type="text" autocomplete="email" required>
+        </div>
+
+        <div class="fake-door-form__field">
+          <label for="googleDbUrl">Google DB URL</label>
+          <input id="googleDbUrl" name="googleDbUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="url">
         </div>
       </div>
     </div>
