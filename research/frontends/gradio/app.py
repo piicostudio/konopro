@@ -78,13 +78,16 @@ OUTPUT_DIR = RESEARCH_ROOT / ".cache" / "gradio_outputs"
 DEREVERB_CACHE_DIR = RESEARCH_ROOT / ".cache" / "dereverb"
 PITCH_CONTOUR_CACHE_DIR = RESEARCH_ROOT / ".cache" / "pitch_contours"
 ACTIVE_RMS_CACHE_DIR = RESEARCH_ROOT / ".cache" / "active_rms"
+ALIGNMENT_CHECK_CACHE_DIR = RESEARCH_ROOT / ".cache" / "alignment_checks"
 PITCH_CONTOUR_CACHE_VERSION = 1
 ACTIVE_RMS_CACHE_VERSION = 1
+ALIGNMENT_CHECK_CACHE_VERSION = 1
 MAX_REQUEST_WINDOW_PREVIEWS = 40
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 DEREVERB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 PITCH_CONTOUR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 ACTIVE_RMS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+ALIGNMENT_CHECK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 PITCH_KWARGS = {
@@ -689,6 +692,146 @@ def _empty_alignment_check_response(
     )
 
 
+def _alignment_check_cache_dir(
+    reference_path: str,
+    current_path: str,
+    *,
+    max_duration_s: float = 24.0,
+) -> tuple[Path, str]:
+    payload = {
+        "version": ALIGNMENT_CHECK_CACHE_VERSION,
+        "reference_hash": _sha256_file(reference_path),
+        "current_hash": _sha256_file(current_path),
+        "pitch_kwargs": PITCH_KWARGS,
+        "clean_kwargs": CLEAN_KWARGS,
+        "alignment_kwargs": {
+            "dtw_time_weight": CONTOUR_SCORE_KWARGS["dtw_time_weight"],
+            "dtw_band_radius": CONTOUR_SCORE_KWARGS["dtw_band_radius"],
+            "max_dtw_frames": CONTOUR_SCORE_KWARGS["max_dtw_frames"],
+            "timing_penalty": CONTOUR_SCORE_KWARGS["timing_penalty"],
+        },
+        "preview": {
+            "max_duration_s": round(float(max_duration_s), 3),
+            "target_peak": 0.85,
+            "ab_silence_s": 0.75,
+        },
+    }
+    encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
+    cache_key = hashlib.sha256(encoded).hexdigest()[:24]
+    return ALIGNMENT_CHECK_CACHE_DIR / cache_key, cache_key
+
+
+def _load_alignment_check_cache(
+    reference_path: str,
+    current_path: str,
+    *,
+    max_duration_s: float = 24.0,
+) -> dict[str, Any] | None:
+    cache_dir, cache_key = _alignment_check_cache_dir(
+        reference_path,
+        current_path,
+        max_duration_s=max_duration_s,
+    )
+    metadata_path = cache_dir / "alignment_check.json"
+    if not metadata_path.exists():
+        return None
+
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    files = metadata.get("files") if isinstance(metadata, dict) else None
+    if not isinstance(files, dict):
+        return None
+
+    def cached_file(name: str) -> str | None:
+        value = files.get(name)
+        if not value:
+            return None
+        path = Path(str(value))
+        return str(path) if path.exists() else None
+
+    alignment_plot = cached_file("alignment_plot")
+    normalization_plot = cached_file("normalization_plot")
+    timing_debug_payload = metadata.get("timing_debug_payload")
+    if not alignment_plot or not normalization_plot or not isinstance(timing_debug_payload, dict):
+        return None
+
+    result = {
+        "cache_key": cache_key,
+        "alignment_plot": alignment_plot,
+        "normalization_plot": normalization_plot,
+        "aligned_reference_audio": cached_file("aligned_reference_audio"),
+        "aligned_current_audio": cached_file("aligned_current_audio"),
+        "aligned_ab_audio": cached_file("aligned_ab_audio"),
+        "aligned_mix_audio": cached_file("aligned_mix_audio"),
+        "timing_debug_payload": timing_debug_payload,
+    }
+    audible = timing_debug_payload.get("audible_alignment_check")
+    if isinstance(audible, dict) and audible.get("available"):
+        required_audio = [
+            result["aligned_reference_audio"],
+            result["aligned_current_audio"],
+            result["aligned_ab_audio"],
+            result["aligned_mix_audio"],
+        ]
+        if not all(required_audio):
+            return None
+    return result
+
+
+def _write_alignment_check_cache(
+    *,
+    cache_dir: Path,
+    cache_key: str,
+    reference_path: str,
+    current_path: str,
+    alignment_plot: str | None,
+    normalization_plot: str | None,
+    aligned_reference_audio: str | None,
+    aligned_current_audio: str | None,
+    aligned_ab_audio: str | None,
+    aligned_mix_audio: str | None,
+    timing_debug_payload: dict[str, Any],
+) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "cache_key": cache_key,
+        "version": ALIGNMENT_CHECK_CACHE_VERSION,
+        "created_at": time.time(),
+        "reference_path": str(reference_path),
+        "current_path": str(current_path),
+        "files": {
+            "alignment_plot": alignment_plot,
+            "normalization_plot": normalization_plot,
+            "aligned_reference_audio": aligned_reference_audio,
+            "aligned_current_audio": aligned_current_audio,
+            "aligned_ab_audio": aligned_ab_audio,
+            "aligned_mix_audio": aligned_mix_audio,
+        },
+        "timing_debug_payload": _json_safe(timing_debug_payload),
+    }
+    (cache_dir / "alignment_check.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
 def _evaluation_steps_table(
     *,
     reference_mode: str,
@@ -803,6 +946,214 @@ def _score_breakdown_table(score: Any) -> pd.DataFrame:
     )
 
 
+def _empty_explanation_response(message: str) -> tuple[Any, ...]:
+    return (
+        {},
+        message,
+        message,
+        pd.DataFrame(),
+        {"available": False, "reason": message},
+    )
+
+
+def _empty_problem_moments_response(message: str, explanation_state: dict[str, Any] | None = None) -> tuple[Any, ...]:
+    payload = {
+        "available": False,
+        "reason": message,
+        "explanation": explanation_state or {},
+        "moments": [],
+    }
+    return (
+        message,
+        pd.DataFrame(),
+        message,
+        None,
+        None,
+        payload,
+        payload,
+        message,
+    )
+
+
+def _current_score_dict(evaluation_details: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(evaluation_details, dict):
+        return {}
+    current = evaluation_details.get("current")
+    if isinstance(current, dict):
+        return current
+    return evaluation_details
+
+
+def _score_float(score: dict[str, Any], key: str, default: float = np.nan) -> float:
+    value = score.get(key)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _score_warnings(score: dict[str, Any]) -> list[str]:
+    warnings = score.get("warnings", [])
+    if isinstance(warnings, tuple):
+        return [str(item) for item in warnings]
+    if isinstance(warnings, list):
+        return [str(item) for item in warnings]
+    if warnings:
+        return [str(warnings)]
+    return []
+
+
+def _primary_coach_issue(
+    score: dict[str, Any],
+    timing_debug: dict[str, Any] | None,
+    stability_debug: dict[str, Any] | None,
+) -> tuple[str, str]:
+    pitch = _score_float(score, "pitch_accuracy_score", 100.0)
+    stability = _score_float(score, "stability_score", 100.0)
+    coverage = _score_float(score, "coverage_score", 100.0)
+    timing = _score_float(score, "timing_score", 100.0)
+    confidence = _score_float(score, "recording_confidence_score", 100.0)
+    stability_cents = _score_float(score, "pitch_stability_cents", np.nan)
+    mean_error = _score_float(score, "mean_pitch_error_cents", np.nan)
+    local_timing = (
+        _score_float(timing_debug or {}, "median_abs_local_error_s", 0.0)
+        if isinstance(timing_debug, dict)
+        else 0.0
+    )
+    p95_residual = (
+        _score_float(stability_debug or {}, "p95_abs_residual_cents", np.nan)
+        if isinstance(stability_debug, dict)
+        else np.nan
+    )
+
+    if confidence < 55 or coverage < 45:
+        return (
+            "recording_confidence",
+            "The analysis may be unreliable because the vocal signal is weak or too little singing was detected.",
+        )
+    if timing < 65 or local_timing > 0.18:
+        return (
+            "timing",
+            "The biggest issue appears to be timing: the scorer is often comparing different parts of the phrase.",
+        )
+    if pitch < 65 and np.isfinite(mean_error):
+        return (
+            "pitch_accuracy",
+            f"The main practice target is pitch accuracy. The average pitch error is about {mean_error:.0f} cents.",
+        )
+    if stability < 65 and np.isfinite(stability_cents):
+        if np.isfinite(p95_residual) and p95_residual > 500:
+            return (
+                "spiky_residuals",
+                "The stability score is being driven by a few very large residual spikes, so inspect those moments before judging vocal steadiness.",
+            )
+        return (
+            "pitch_consistency",
+            f"The main practice target is consistency: residual pitch errors vary by about {stability_cents:.0f} cents.",
+        )
+    return (
+        "polish",
+        "The score is mostly healthy. Use the problem moments to find the most useful phrase-level practice targets.",
+    )
+
+
+def _practice_tip_for_issue(issue: str) -> str:
+    tips = {
+        "recording_confidence": "Retest with a louder vocal, less backing-track bleed, or a cleaner vocal stem before making musical conclusions.",
+        "timing": "Practice entering the phrase with the reference at a slower speed, then repeat at full tempo.",
+        "pitch_accuracy": "Loop the phrase slowly and match the target pitch before adding full karaoke timing.",
+        "pitch_consistency": "Sustain the problem notes on a vowel and reduce wobble before singing the full phrase.",
+        "spiky_residuals": "Listen to the timestamped clips first; the issue may be timing or pitch extraction, not vocal shakiness.",
+        "polish": "Pick one timestamped phrase and repeat it until the pitch trace stays close for the whole line.",
+    }
+    return tips.get(issue, tips["polish"])
+
+
+def _build_explanation_payload(
+    evaluation_details: dict[str, Any] | None,
+    timing_debug: dict[str, Any] | None,
+    stability_debug: dict[str, Any] | None,
+) -> dict[str, Any]:
+    score = _current_score_dict(evaluation_details)
+    if not score:
+        return {"available": False, "reason": "Run Step 4 full-song evaluation first."}
+
+    issue, summary = _primary_coach_issue(score, timing_debug, stability_debug)
+    overall = _score_float(score, "overall_score", np.nan)
+    pitch = _score_float(score, "pitch_accuracy_score", np.nan)
+    timing = _score_float(score, "timing_score", np.nan)
+    stability = _score_float(score, "stability_score", np.nan)
+    coverage = _score_float(score, "coverage_score", np.nan)
+    confidence = _score_float(score, "recording_confidence_score", np.nan)
+    warnings = _score_warnings(score)
+
+    confidence_label = "high"
+    if confidence < 55 or coverage < 50:
+        confidence_label = "low"
+    elif confidence < 75 or coverage < 75 or warnings:
+        confidence_label = "medium"
+
+    issue_rows = [
+        {"signal": "pitch_accuracy", "score": round(float(pitch), 2) if np.isfinite(pitch) else np.nan},
+        {"signal": "timing", "score": round(float(timing), 2) if np.isfinite(timing) else np.nan},
+        {"signal": "stability", "score": round(float(stability), 2) if np.isfinite(stability) else np.nan},
+        {"signal": "coverage", "score": round(float(coverage), 2) if np.isfinite(coverage) else np.nan},
+    ]
+    issue_rows = sorted(
+        issue_rows,
+        key=lambda row: row["score"] if np.isfinite(row["score"]) else 999.0,
+    )
+    weakest = [row["signal"] for row in issue_rows[:2]]
+    payload = {
+        "available": True,
+        "summary": summary,
+        "primary_issue": issue,
+        "analysis_confidence": confidence_label,
+        "overall_score": round(float(overall), 2) if np.isfinite(overall) else None,
+        "weakest_signals": weakest,
+        "practice_tip": _practice_tip_for_issue(issue),
+        "warnings": warnings,
+        "score_snapshot": {
+            "pitch_accuracy": pitch,
+            "timing": timing,
+            "stability": stability,
+            "coverage": coverage,
+            "recording_confidence": confidence,
+        },
+    }
+    return _json_safe(payload)
+
+
+def _explanation_markdown(payload: dict[str, Any]) -> str:
+    if not payload.get("available"):
+        return str(payload.get("reason") or "Run Step 4 first.")
+    weakest = ", ".join(str(item) for item in payload.get("weakest_signals", []))
+    warnings = payload.get("warnings") or []
+    warning_text = f"\n\nWarnings: {'; '.join(warnings[:3])}" if warnings else ""
+    return (
+        f"### Coach explanation\n\n"
+        f"{payload['summary']}\n\n"
+        f"- Primary issue: `{payload['primary_issue']}`\n"
+        f"- Analysis confidence: `{payload['analysis_confidence']}`\n"
+        f"- Weakest signals: {weakest or 'none'}\n"
+        f"- Practice tip: {payload['practice_tip']}"
+        f"{warning_text}"
+    )
+
+
+def _explanation_table(payload: dict[str, Any]) -> pd.DataFrame:
+    if not payload.get("available"):
+        return pd.DataFrame()
+    snapshot = payload.get("score_snapshot") or {}
+    rows = [
+        {"field": "overall_score", "value": payload.get("overall_score")},
+        {"field": "primary_issue", "value": payload.get("primary_issue")},
+        {"field": "analysis_confidence", "value": payload.get("analysis_confidence")},
+    ]
+    rows.extend({"field": key, "value": value} for key, value in snapshot.items())
+    return pd.DataFrame(rows)
+
+
 def _build_stability_diagnostics(
     *,
     reference_contour: PitchContour | None,
@@ -888,6 +1239,224 @@ def _same_time_pitch_errors_cents(
             "signed_error_cents": signed_errors,
         }
     )
+
+
+def _problem_moments_from_contours(
+    reference: PitchContour,
+    current: PitchContour,
+    *,
+    score: dict[str, Any],
+    timing_debug: dict[str, Any] | None,
+    max_moments: int = 2,
+) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
+    offset_s = _score_float(score, "timing_offset_s", np.nan)
+    if not np.isfinite(offset_s) and isinstance(timing_debug, dict):
+        offset_s = _score_float(timing_debug, "global_offset_s", 0.0)
+    if not np.isfinite(offset_s):
+        offset_s = 0.0
+
+    errors = _same_time_pitch_errors_cents(reference, current, offset_s=float(offset_s))
+    if errors.empty:
+        return errors, []
+
+    signed_errors = errors["signed_error_cents"].to_numpy(dtype=float)
+    transposition = float(np.nanmedian(signed_errors))
+    residuals = signed_errors - transposition
+    abs_residuals = np.abs(residuals)
+    errors = errors.copy()
+    errors["residual_error_cents"] = residuals
+    errors["abs_residual_cents"] = abs_residuals
+    errors["abs_pitch_error_cents"] = np.abs(signed_errors)
+
+    threshold = float(max(120.0, np.nanpercentile(abs_residuals, 90)))
+    bad_indices = np.flatnonzero(abs_residuals >= threshold)
+    clusters = _cluster_problem_indices(errors, bad_indices)
+    if not clusters:
+        clusters = _fallback_peak_clusters(errors, max_moments=max_moments)
+
+    moments: list[dict[str, Any]] = []
+    for cluster in clusters:
+        window = errors.iloc[cluster]
+        if window.empty:
+            continue
+        start_s = float(window["reference_time_s"].min())
+        end_s = float(window["reference_time_s"].max())
+        if end_s <= start_s:
+            end_s = start_s + max(_median_contour_step_s(reference), 0.20)
+        median_abs = float(np.nanmedian(window["abs_residual_cents"]))
+        max_abs = float(np.nanmax(window["abs_residual_cents"]))
+        mean_abs_pitch = float(np.nanmean(window["abs_pitch_error_cents"]))
+        likely_issue = _classify_problem_moment(
+            median_abs_residual=median_abs,
+            max_abs_residual=max_abs,
+            mean_abs_pitch_error=mean_abs_pitch,
+            score=score,
+            timing_debug=timing_debug,
+        )
+        moments.append(
+            {
+                "start_s": round(start_s, 2),
+                "end_s": round(end_s, 2),
+                "duration_s": round(end_s - start_s, 2),
+                "likely_issue": likely_issue,
+                "median_abs_residual_cents": round(median_abs, 2),
+                "max_abs_residual_cents": round(max_abs, 2),
+                "mean_abs_pitch_error_cents": round(mean_abs_pitch, 2),
+                "frames": int(len(window)),
+                "practice_tip": _moment_practice_tip(likely_issue),
+                "evidence": _moment_evidence(likely_issue, median_abs, max_abs, mean_abs_pitch),
+            }
+        )
+
+    moments = sorted(
+        moments,
+        key=lambda item: (
+            float(item["median_abs_residual_cents"]) + 0.25 * float(item["max_abs_residual_cents"]),
+            float(item["duration_s"]),
+        ),
+        reverse=True,
+    )
+    for rank, moment in enumerate(moments[:max_moments], start=1):
+        moment["rank"] = rank
+        moment["timing_offset_s"] = round(float(offset_s), 3)
+    return errors, moments[:max_moments]
+
+
+def _cluster_problem_indices(errors: pd.DataFrame, bad_indices: np.ndarray) -> list[list[int]]:
+    if bad_indices.size == 0:
+        return []
+    times = errors["reference_time_s"].to_numpy(dtype=float)
+    clusters: list[list[int]] = []
+    current: list[int] = [int(bad_indices[0])]
+    for index in bad_indices[1:]:
+        index = int(index)
+        prev = current[-1]
+        if times[index] - times[prev] <= 0.75:
+            current.append(index)
+        else:
+            if len(current) >= 3:
+                clusters.append(current)
+            current = [index]
+    if len(current) >= 3:
+        clusters.append(current)
+    return clusters
+
+
+def _fallback_peak_clusters(errors: pd.DataFrame, *, max_moments: int) -> list[list[int]]:
+    if errors.empty:
+        return []
+    times = errors["reference_time_s"].to_numpy(dtype=float)
+    residuals = errors["abs_residual_cents"].to_numpy(dtype=float)
+    ranked = np.argsort(residuals)[::-1]
+    clusters: list[list[int]] = []
+    used_centers: list[float] = []
+    for index in ranked:
+        center = float(times[index])
+        if any(abs(center - used) < 4.0 for used in used_centers):
+            continue
+        mask = np.flatnonzero(np.abs(times - center) <= 1.25)
+        if mask.size:
+            clusters.append([int(item) for item in mask])
+            used_centers.append(center)
+        if len(clusters) >= max_moments:
+            break
+    return clusters
+
+
+def _classify_problem_moment(
+    *,
+    median_abs_residual: float,
+    max_abs_residual: float,
+    mean_abs_pitch_error: float,
+    score: dict[str, Any],
+    timing_debug: dict[str, Any] | None,
+) -> str:
+    timing_score = _score_float(score, "timing_score", 100.0)
+    local_timing = _score_float(timing_debug or {}, "median_abs_local_error_s", 0.0)
+    timing_spread = _score_float(timing_debug or {}, "raw_delta_s_mad_or_std", 0.0)
+    if max_abs_residual >= 700.0:
+        return "possible_extraction_or_alignment_spike"
+    if timing_score < 70.0 or local_timing > 0.18 or timing_spread > 0.18:
+        return "likely_timing_or_alignment"
+    if mean_abs_pitch_error >= 150.0:
+        return "likely_pitch_accuracy"
+    if median_abs_residual >= 100.0:
+        return "likely_pitch_consistency"
+    return "minor_polish"
+
+
+def _moment_practice_tip(issue: str) -> str:
+    tips = {
+        "possible_extraction_or_alignment_spike": "Listen first. If the clips do not match the same phrase, fix alignment/source quality before practicing this as a vocal issue.",
+        "likely_timing_or_alignment": "Clap or speak the rhythm, then sing the phrase while entering slightly earlier with the reference.",
+        "likely_pitch_accuracy": "Slow this phrase down and match the target note sequence before singing with full backing.",
+        "likely_pitch_consistency": "Hold the target notes more steadily; practice the phrase on one vowel before adding lyrics.",
+        "minor_polish": "Repeat this phrase and focus on keeping the pitch trace close through note transitions.",
+    }
+    return tips.get(issue, tips["minor_polish"])
+
+
+def _moment_evidence(issue: str, median_abs: float, max_abs: float, mean_abs_pitch: float) -> str:
+    return (
+        f"{issue}; median residual {median_abs:.0f} cents, "
+        f"max residual {max_abs:.0f} cents, mean pitch error {mean_abs_pitch:.0f} cents"
+    )
+
+
+def _write_problem_moment_ab_audio(
+    *,
+    reference_path: str,
+    current_path: str,
+    moment: dict[str, Any],
+    index: int,
+    context_s: float = 1.25,
+    max_duration_s: float = 10.0,
+) -> str | None:
+    offset_s = float(moment.get("timing_offset_s", 0.0) or 0.0)
+    start_s = max(0.0, float(moment["start_s"]) - context_s)
+    end_s = float(moment["end_s"]) + context_s
+    duration_s = min(max_duration_s, max(2.5, end_s - start_s))
+
+    reference_audio, reference_sr = load_audio(reference_path)
+    current_audio, current_sr = load_audio(current_path, target_sr=reference_sr)
+    reference_clip = _slice_audio(reference_audio, reference_sr, start_s, duration_s)
+    current_clip = _slice_audio(current_audio, current_sr, start_s + offset_s, duration_s)
+    clip_length = min(reference_clip.size, current_clip.size)
+    if clip_length <= 1:
+        return None
+    reference_clip = _normalize_preview_audio(reference_clip[:clip_length])
+    current_clip = _normalize_preview_audio(current_clip[:clip_length])
+    silence = np.zeros(int(round(reference_sr * 0.65)), dtype=np.float32)
+    ab_audio = np.concatenate([reference_clip, silence, current_clip]).astype(np.float32)
+    output_path = OUTPUT_DIR / f"coach_problem_moment_{index}_ab.wav"
+    write_wav(output_path, ab_audio, reference_sr)
+    return str(output_path)
+
+
+def _coach_feedback_markdown(
+    explanation: dict[str, Any],
+    moments: list[dict[str, Any]],
+) -> str:
+    if not explanation.get("available"):
+        return str(explanation.get("reason") or "Run Step 6 explanation first.")
+    lines = [
+        "### Coach feedback",
+        "",
+        str(explanation.get("summary", "")),
+        "",
+        f"Practice focus: **{explanation.get('primary_issue', 'unknown')}**",
+        f"Next drill: {explanation.get('practice_tip', '')}",
+    ]
+    if moments:
+        lines.extend(["", "Problem moments to replay:"])
+        for moment in moments:
+            lines.append(
+                f"- #{moment['rank']} {moment['start_s']:.2f}s-{moment['end_s']:.2f}s: "
+                f"{moment['likely_issue']} | {moment['practice_tip']}"
+            )
+    else:
+        lines.extend(["", "No strong problem moments were found from the current residual trace."])
+    return "\n".join(lines)
 
 
 def _sample_contour_nearest_for_times(
@@ -1294,6 +1863,8 @@ def _build_offset_alignment_audio(
     reference_contour: PitchContour | None,
     current_contour: PitchContour | None,
     max_duration_s: float = 24.0,
+    output_dir: Path | None = None,
+    filename_prefix: str = "evaluation_offset",
 ) -> tuple[str | None, str | None, str | None, str | None, dict[str, object]]:
     if not reference_path or not current_path:
         return (None, None, None, None, {"available": False, "reason": "reference/current audio missing"})
@@ -1371,10 +1942,12 @@ def _build_offset_alignment_audio(
     ab_audio = np.concatenate([reference_preview, silence, current_preview]).astype(np.float32)
     mix_audio = _normalize_preview_audio(0.5 * reference_preview + 0.5 * current_preview)
 
-    reference_out = OUTPUT_DIR / "evaluation_offset_reference.wav"
-    current_out = OUTPUT_DIR / "evaluation_offset_current.wav"
-    ab_out = OUTPUT_DIR / "evaluation_offset_ab.wav"
-    mix_out = OUTPUT_DIR / "evaluation_offset_overlay.wav"
+    output_dir = output_dir or OUTPUT_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+    reference_out = output_dir / f"{filename_prefix}_reference.wav"
+    current_out = output_dir / f"{filename_prefix}_current.wav"
+    ab_out = output_dir / f"{filename_prefix}_ab.wav"
+    mix_out = output_dir / f"{filename_prefix}_overlay.wav"
     write_wav(reference_out, reference_preview, reference_sr)
     write_wav(current_out, current_preview, reference_sr)
     write_wav(ab_out, ab_audio, reference_sr)
@@ -2750,6 +3323,58 @@ def run_alignment_check_only(
     started = time.perf_counter()
     profile_rows: list[dict[str, Any]] = []
     try:
+        cache_started = time.perf_counter()
+        cached_alignment = _load_alignment_check_cache(reference_path, current_path)
+        if cached_alignment is not None:
+            timing_debug_payload = dict(cached_alignment["timing_debug_payload"])
+            timing_debug_payload["alignment_check_cache"] = {
+                "status": "hit",
+                "cache_key": cached_alignment["cache_key"],
+            }
+            profile_rows.append(
+                _profile_row(
+                    "Alignment check cache",
+                    cache_started,
+                    f"cache hit {cached_alignment['cache_key']}",
+                )
+            )
+            elapsed = time.perf_counter() - started
+            profile_rows.append(
+                {
+                    "stage": "Alignment check total",
+                    "elapsed_s": round(elapsed, 2),
+                    "notes": "Loaded cached plots, timing JSON, and audio clips.",
+                }
+            )
+            status = f"Audible alignment check loaded from cache in {elapsed:.2f}s."
+            if progress is not None:
+                progress(1.0, desc="Alignment check cache hit")
+            workflow = "Alignment check loaded from cache. Listen to A/B and overlay before running full evaluation."
+            cached_state = (
+                contour_state
+                if _contour_state_matches(
+                    contour_state,
+                    reference_mode=reference_mode,
+                    reference_path=reference_path,
+                    current_path=current_path,
+                    previous_path=previous_path,
+                )
+                else _empty_contour_state()
+            )
+            return (
+                cached_state,
+                status,
+                _profile_table(profile_rows),
+                cached_alignment["alignment_plot"],
+                cached_alignment["normalization_plot"],
+                cached_alignment["aligned_reference_audio"],
+                cached_alignment["aligned_current_audio"],
+                cached_alignment["aligned_ab_audio"],
+                cached_alignment["aligned_mix_audio"],
+                timing_debug_payload,
+                workflow,
+            )
+
         if _contour_state_matches(
             contour_state,
             reference_mode=reference_mode,
@@ -2806,18 +3431,19 @@ def run_alignment_check_only(
             )
         )
 
+        alignment_cache_dir, alignment_cache_key = _alignment_check_cache_dir(reference_path, current_path)
         if progress is not None:
             progress(0.78, desc="Building alignment plots")
         plot_started = time.perf_counter()
         alignment_plot = _save_dtw_alignment_plot(
             reference_contour,
             current_contour,
-            "evaluation_full_track_dtw.png",
+            str(alignment_cache_dir / "evaluation_full_track_dtw.png"),
         )
         normalization_plot = _save_normalization_plot(
             reference_contour,
             current_contour,
-            "evaluation_full_track_normalization.png",
+            str(alignment_cache_dir / "evaluation_full_track_normalization.png"),
         )
         profile_rows.append(_profile_row("Alignment plots", plot_started, "DTW links and pitch normalization."))
 
@@ -2837,14 +3463,37 @@ def run_alignment_check_only(
             score=None,
             reference_contour=reference_contour,
             current_contour=current_contour,
+            output_dir=alignment_cache_dir,
+            filename_prefix="evaluation_offset",
         )
         profile_rows.append(_profile_row("Alignment audio clips", audio_started, "Global-offset excerpts only."))
 
         timing_debug_payload = dict(timing_debug or {})
         timing_debug_payload["audible_alignment_check"] = audible_alignment_details
+        timing_debug_payload["alignment_check_cache"] = {
+            "status": "stored",
+            "cache_key": alignment_cache_key,
+        }
+        _write_alignment_check_cache(
+            cache_dir=alignment_cache_dir,
+            cache_key=alignment_cache_key,
+            reference_path=reference_path,
+            current_path=current_path,
+            alignment_plot=alignment_plot,
+            normalization_plot=normalization_plot,
+            aligned_reference_audio=aligned_reference_audio,
+            aligned_current_audio=aligned_current_audio,
+            aligned_ab_audio=aligned_ab_audio,
+            aligned_mix_audio=aligned_mix_audio,
+            timing_debug_payload=timing_debug_payload,
+        )
         elapsed = time.perf_counter() - started
         profile_rows.append(
-            {"stage": "Alignment check total", "elapsed_s": round(elapsed, 2), "notes": "Contours + DTW + clips."}
+            {
+                "stage": "Alignment check total",
+                "elapsed_s": round(elapsed, 2),
+                "notes": f"Contours + DTW + cached clips ({alignment_cache_key}).",
+            }
         )
         status = f"Audible alignment check complete in {elapsed:.2f}s."
         if progress is not None:
@@ -3106,7 +3755,7 @@ def run_evaluation(
             status = f"{status}\n\nWarnings:\n{warnings}"
         if progress is not None:
             progress(1.0, desc="Done")
-        workflow = "Full-song evaluation complete. Next: optional Step 5 (song/section matching)."
+        workflow = "Full-song evaluation complete. Next: Step 6 explanation, or optional Step 5 song/section matching."
         return (
             status,
             metrics,
@@ -3123,6 +3772,130 @@ def run_evaluation(
     except Exception as exc:
         status = f"Evaluation failed after {time.perf_counter() - started:.2f}s: {exc}"
         return _empty_evaluation_response(status)
+
+
+def run_explanation_generator(
+    evaluation_details: dict[str, Any] | None,
+    timing_debug: dict[str, Any] | None,
+    stability_debug: dict[str, Any] | None,
+) -> tuple[Any, ...]:
+    payload = _build_explanation_payload(evaluation_details, timing_debug, stability_debug)
+    if not payload.get("available"):
+        return _empty_explanation_response(str(payload.get("reason") or "Run Step 4 first."))
+    status = "Step 6 explanation generated from the latest full-song evaluation."
+    return (
+        payload,
+        status,
+        _explanation_markdown(payload),
+        _explanation_table(payload),
+        payload,
+    )
+
+
+def run_problem_moment_detection(
+    reference_mode: str,
+    reference_audio: str | None,
+    current_take: str | None,
+    previous_take: str | None,
+    prepared_state: dict[str, Any] | None,
+    contour_state: dict[str, Any] | None,
+    evaluation_details: dict[str, Any] | None,
+    timing_debug: dict[str, Any] | None,
+    explanation_state: dict[str, Any] | None,
+    progress: gr.Progress | None = None,
+) -> tuple[Any, ...]:
+    explanation = explanation_state if isinstance(explanation_state, dict) else {}
+    if not explanation.get("available"):
+        explanation = _build_explanation_payload(evaluation_details, timing_debug, None)
+    if not explanation.get("available"):
+        message = str(explanation.get("reason") or "Run Step 4 full-song evaluation first.")
+        return _empty_problem_moments_response(message, explanation)
+    if reference_mode != "Uploaded reference audio":
+        message = "Problem moments need Uploaded reference audio mode for 1:1 residual analysis."
+        return _empty_problem_moments_response(message, explanation)
+
+    reference_path, current_path, previous_path = _analysis_paths(
+        reference_audio,
+        current_take,
+        previous_take,
+        prepared_state,
+    )
+    if not reference_path or not current_path:
+        message = "Problem moments need both reference and current analysis audio."
+        return _empty_problem_moments_response(message, explanation)
+
+    started = time.perf_counter()
+    try:
+        if _contour_state_matches(
+            contour_state,
+            reference_mode=reference_mode,
+            reference_path=reference_path,
+            current_path=current_path,
+            previous_path=previous_path,
+        ):
+            active_contour_state = contour_state or _empty_contour_state()
+        else:
+            if progress is not None:
+                progress(0.15, desc="Loading cached contours")
+            active_contour_state, _, _ = _extract_evaluation_contours(
+                reference_mode=reference_mode,
+                reference_path=reference_path,
+                current_path=current_path,
+                previous_path=previous_path,
+                progress=None,
+            )
+        reference_contour = active_contour_state.get("reference_contour")
+        current_contour = active_contour_state.get("current_contour")
+        if reference_contour is None or current_contour is None:
+            message = "Problem moments need both reference and current contours."
+            return _empty_problem_moments_response(message, explanation)
+
+        if progress is not None:
+            progress(0.55, desc="Finding residual spikes")
+        score = _current_score_dict(evaluation_details)
+        _, moments = _problem_moments_from_contours(
+            reference_contour,
+            current_contour,
+            score=score,
+            timing_debug=timing_debug if isinstance(timing_debug, dict) else None,
+            max_moments=2,
+        )
+        if progress is not None:
+            progress(0.75, desc="Writing coach clips")
+        for index, moment in enumerate(moments, start=1):
+            moment["ab_audio"] = _write_problem_moment_ab_audio(
+                reference_path=reference_path,
+                current_path=current_path,
+                moment=moment,
+                index=index,
+            )
+
+        moments_table = pd.DataFrame(moments)
+        coach_markdown = _coach_feedback_markdown(explanation, moments)
+        payload = {
+            "available": True,
+            "elapsed_s": round(time.perf_counter() - started, 2),
+            "explanation": explanation,
+            "moments": moments,
+            "moment_count": len(moments),
+        }
+        status = f"Step 7 detected {len(moments)} problem moment(s) in {payload['elapsed_s']:.2f}s."
+        if progress is not None:
+            progress(1.0, desc="Coach feedback ready")
+        workflow = "Coach feedback ready. Listen to the timestamped A/B clips and inspect the payload."
+        return (
+            status,
+            moments_table,
+            coach_markdown,
+            moments[0].get("ab_audio") if len(moments) >= 1 else None,
+            moments[1].get("ab_audio") if len(moments) >= 2 else None,
+            {"moments": moments},
+            _json_safe(payload),
+            workflow,
+        )
+    except Exception as exc:
+        message = f"Problem moment detection failed after {time.perf_counter() - started:.2f}s: {exc}"
+        return _empty_problem_moments_response(message, explanation)
 
 
 def run_matching(
@@ -3290,7 +4063,10 @@ def _extract_clean_contour(path: str, name: str):
 
 
 def _save_plot(fig: Any, filename: str) -> str:
-    path = OUTPUT_DIR / filename
+    path = Path(filename)
+    if not path.is_absolute():
+        path = OUTPUT_DIR / path
+    path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=160, bbox_inches="tight")
     try:
         import matplotlib.pyplot as plt
@@ -4200,6 +4976,7 @@ playback checkpoints for local research testing.
             with gr.Tab("Scoring Model"):
                 prepared_state = gr.State({})
                 contour_state = gr.State(_empty_contour_state())
+                explanation_state = gr.State({})
         
                 workflow_status = gr.Markdown("### Workflow: Step 1 not started.")
                 with gr.Accordion("Step 1 - Import & Preview Files", open=True):
@@ -4692,6 +5469,78 @@ playback checkpoints for local research testing.
                             handoff_reference_audio,
                             handoff_query_audio,
                             matching_json,
+                            workflow_status,
+                        ],
+                    )
+
+                with gr.Accordion("Step 6 - Explanation Generator", open=False):
+                    gr.Markdown(
+                        "Turn the latest Step 4 score into a structured coaching explanation. This is deterministic and uses the score JSON, timing debug, and stability diagnostics."
+                    )
+                    explanation_button = gr.Button("Generate Explanation", variant="primary")
+                    explanation_status = gr.Markdown()
+                    coach_explanation = gr.Markdown()
+                    explanation_table = gr.Dataframe(label="Explanation signals", wrap=True)
+                    explanation_json = gr.JSON(label="Explanation payload")
+                    explanation_button.click(
+                        run_explanation_generator,
+                        inputs=[
+                            evaluation_json,
+                            evaluation_timing_debug,
+                            stability_diagnostics_json,
+                        ],
+                        outputs=[
+                            explanation_state,
+                            explanation_status,
+                            coach_explanation,
+                            explanation_table,
+                            explanation_json,
+                        ],
+                    )
+
+                with gr.Accordion("Step 7 - Problem Moments / Coach Feedback", open=False):
+                    gr.Markdown(
+                        "Find the top two timestamped problem moments from residual pitch errors, then combine them with Step 6 into coach feedback."
+                    )
+                    problem_moments_button = gr.Button("Detect Problem Moments", variant="primary")
+                    problem_moments_status = gr.Markdown()
+                    coach_feedback = gr.Markdown()
+                    problem_moments_table = gr.Dataframe(label="Top problem moments", wrap=True)
+                    with gr.Row():
+                        problem_moment_audio_1 = gr.Audio(
+                            label="Problem moment 1 A/B",
+                            type="filepath",
+                            interactive=False,
+                        )
+                        problem_moment_audio_2 = gr.Audio(
+                            label="Problem moment 2 A/B",
+                            type="filepath",
+                            interactive=False,
+                        )
+                    with gr.Row():
+                        problem_moments_json = gr.JSON(label="Problem moments payload")
+                        coach_feedback_json = gr.JSON(label="Coach feedback payload")
+                    problem_moments_button.click(
+                        run_problem_moment_detection,
+                        inputs=[
+                            reference_mode,
+                            reference_audio,
+                            current_take,
+                            previous_take,
+                            prepared_state,
+                            contour_state,
+                            evaluation_json,
+                            evaluation_timing_debug,
+                            explanation_state,
+                        ],
+                        outputs=[
+                            problem_moments_status,
+                            problem_moments_table,
+                            coach_feedback,
+                            problem_moment_audio_1,
+                            problem_moment_audio_2,
+                            problem_moments_json,
+                            coach_feedback_json,
                             workflow_status,
                         ],
                     )
