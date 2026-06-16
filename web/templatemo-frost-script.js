@@ -1273,7 +1273,9 @@
   }
 
   function apiRequestHeaders(extraHeaders) {
-    var headers = {};
+    var headers = {
+      "Accept": "application/json"
+    };
     if (isNgrokBackend()) {
       headers["ngrok-skip-browser-warning"] = "true";
     }
@@ -1353,12 +1355,34 @@
   }
 
   function parseResponse(response) {
-    if (!response.ok) {
-      return response.json().then(function (err) {
-        throw new Error(err.detail || "서버 통신 실패");
-      });
+    return response.text().then(function (body) {
+      var payload = null;
+      if (body) {
+        try {
+          payload = JSON.parse(body);
+        } catch (_error) {
+          var preview = body.replace(/\s+/g, " ").trim().slice(0, 180);
+          var fallback = preview || response.statusText || "응답 본문 없음";
+          throw new Error("서버가 JSON이 아닌 응답을 보냈습니다 (" + response.status + "): " + fallback);
+        }
+      }
+
+      if (!response.ok) {
+        throw new Error(errorMessageFromPayload(payload) || "서버 통신 실패 (" + response.status + ")");
+      }
+      return payload || {};
+    });
+  }
+
+  function errorMessageFromPayload(payload) {
+    if (!payload) return "";
+    if (typeof payload.detail === "string") return payload.detail;
+    if (Array.isArray(payload.detail)) {
+      return payload.detail.map(function (item) {
+        return item.msg || item.message || JSON.stringify(item);
+      }).join(", ");
     }
-    return response.json();
+    return payload.message || payload.error || "";
   }
 
   function numericScore(val) {

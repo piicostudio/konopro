@@ -1,5 +1,7 @@
 # KonoPro local 실행 가이드
 
+![KonoPro 로컬 실행 화면](assets/img1.jpg)
+
 Konopro는 유튜브 원곡과 내 노래 녹음 파일을 비교해 보컬 점수, 문제 구간, 코치 피드백을 보여주는 로컬 웹 MVP입니다.
 
 ## 1. 설치 준비
@@ -88,10 +90,14 @@ python3 -m http.server 8765
 
 우측 상단 설정 버튼에서 아래 값을 확인합니다:
 
+![백엔드 주소 설정 예시](assets/img2.jpg)
+
 ```text
 Backend URL: http://127.0.0.1:8000
 Tester ID: 원하는 로컬 테스트 ID
 ```
+
+`Backend URL`은 반드시 `http://127.0.0.1:8000` 또는 `http://localhost:8000`으로 설정합니다. `ngrok` 주소가 들어가 있으면 로컬 주소로 바꿔주세요.
 
 ## 7. 자주 생기는 문제
 
@@ -124,3 +130,4 @@ Week 1: Validate feasibility of prototype
 Week 2: Improve scoring, alignment, and feedback
 Week 3: Build the MVP (frontend)
 Week 4: Test the MVP; deploy. Prepare for final presentations.
+```
