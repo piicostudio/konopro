@@ -10,6 +10,8 @@
   var vantaInstance = null;
   var resultDetailSlides = [];
   var resultDetailIndex = 0;
+  var resultDetailViewTimer = null;
+  var trackedResultHighlightViews = {};
   
   var audioPreviewUrls = {
     take: null
@@ -946,13 +948,17 @@
   function initResultDetailCarousel() {
     if (elements.resultDetailPrev) {
       elements.resultDetailPrev.addEventListener("click", function () {
+        var fromIndex = resultDetailIndex;
         showResultDetailSlide(resultDetailIndex - 1);
+        trackResultDetailNavigation("prev", fromIndex, resultDetailIndex);
       });
     }
 
     if (elements.resultDetailNext) {
       elements.resultDetailNext.addEventListener("click", function () {
+        var fromIndex = resultDetailIndex;
         showResultDetailSlide(resultDetailIndex + 1);
+        trackResultDetailNavigation("next", fromIndex, resultDetailIndex);
       });
     }
 
@@ -996,6 +1002,13 @@
       return {
         title: "문제 구간 " + (index + 1) + " / " + moments.length,
         desc: "음정이나 박자 편차가 컸던 핵심 구간입니다. 내 목소리와 원곡을 번갈아 들어보세요.",
+        type: "highlight",
+        isHighlightSlide: true,
+        highlightRank: index + 1,
+        momentTitle: moment.title,
+        clipStartSeconds: moment.startSeconds,
+        timestamp: moment.timestamp,
+        deviation: moment.deviation,
         html: renderMomentSlide(moment)
       };
     });
@@ -1003,6 +1016,8 @@
     resultDetailSlides.push({
       title: "코치 피드백",
       desc: "이번 분석에서 가장 먼저 확인할 연습 방향입니다.",
+      type: "feedback",
+      isHighlightSlide: false,
       html: renderFeedbackSlide(feedback)
     });
 
@@ -1010,6 +1025,8 @@
       resultDetailSlides.push({
         title: "주의사항 " + warnings.length + "개",
         desc: "녹음이나 원곡 상태 때문에 점수 해석에 영향을 줄 수 있는 항목입니다.",
+        type: "warnings",
+        isHighlightSlide: false,
         html: renderWarningSlide(warnings)
       });
     }
@@ -1017,10 +1034,13 @@
     resultDetailSlides.push({
       title: "출시 알림",
       desc: "정식 서비스가 준비되면 첫 달 무료 코드와 함께 알려드릴게요.",
+      type: "waitlist",
+      isHighlightSlide: false,
       html: renderWaitlistSlide()
     });
 
     resultDetailIndex = 0;
+    trackedResultHighlightViews = {};
     showResultDetailSlide(0);
   }
 
@@ -1126,6 +1146,7 @@
 
     bindMomentClipButtons();
     initInlineWaitlistForm();
+    scheduleResultHighlightViewTracking(resultDetailIndex);
   }
 
   function bindMomentClipButtons() {
@@ -1134,6 +1155,10 @@
     elements.resultDetailSlides.querySelectorAll(".btn-play-take").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var start = Number(btn.getAttribute("data-start"));
+        trackEvent("click_result_play_take", "site_MVP", resultDetailMetadata({
+          clip_start_seconds: start,
+          playback_duration_seconds: 5
+        }));
         playTakeSegment(start, 5);
       });
     });
@@ -1141,9 +1166,60 @@
     elements.resultDetailSlides.querySelectorAll(".btn-play-original").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var start = Number(btn.getAttribute("data-start"));
+        trackEvent("click_result_play_original", "site_MVP", resultDetailMetadata({
+          clip_start_seconds: start
+        }));
         playOriginalSegment(start);
       });
     });
+  }
+
+  function trackResultDetailNavigation(direction, fromIndex, toIndex) {
+    var eventName = direction === "prev" ? "click_result_highlight_prev" : "click_result_highlight_next";
+    trackEvent(eventName, "site_MVP", resultDetailMetadata({
+      direction: direction,
+      from_slide_index: fromIndex + 1,
+      from_slide_title: resultDetailSlides[fromIndex] ? resultDetailSlides[fromIndex].title : "",
+      to_slide_index: toIndex + 1
+    }));
+  }
+
+  function scheduleResultHighlightViewTracking(slideIndex) {
+    if (resultDetailViewTimer) {
+      window.clearTimeout(resultDetailViewTimer);
+      resultDetailViewTimer = null;
+    }
+
+    var slide = resultDetailSlides[slideIndex];
+    if (!slide || !slide.isHighlightSlide || trackedResultHighlightViews[slide.highlightRank]) return;
+
+    resultDetailViewTimer = window.setTimeout(function () {
+      if (resultDetailIndex !== slideIndex || !resultDetailSlides[slideIndex]) return;
+      trackedResultHighlightViews[slide.highlightRank] = true;
+      trackEvent("view_result_highlight_" + slide.highlightRank, "site_MVP", resultDetailMetadata({
+        dwell_ms: 1500
+      }));
+    }, 1500);
+  }
+
+  function resultDetailMetadata(extra) {
+    var slide = resultDetailSlides[resultDetailIndex] || {};
+    var metadata = {
+      slide_index: resultDetailIndex + 1,
+      slide_title: slide.title || "",
+      slide_type: slide.type || "unknown",
+      is_highlight_slide: Boolean(slide.isHighlightSlide),
+      highlight_rank: slide.highlightRank || null,
+      highlight_title: slide.momentTitle || "",
+      clip_start_seconds: slide.clipStartSeconds || null,
+      timestamp: slide.timestamp || "",
+      deviation: slide.deviation || ""
+    };
+
+    Object.keys(extra || {}).forEach(function (key) {
+      metadata[key] = extra[key];
+    });
+    return metadata;
   }
 
   function playTakeSegment(startSeconds, durationSeconds) {
@@ -1473,6 +1549,11 @@
   function resetResult() {
     elements.overallScore.textContent = "--";
     elements.metricGrid.innerHTML = "";
+    if (resultDetailViewTimer) {
+      window.clearTimeout(resultDetailViewTimer);
+      resultDetailViewTimer = null;
+    }
+    trackedResultHighlightViews = {};
     resultDetailSlides = [];
     resultDetailIndex = 0;
     if (elements.resultDetailTitle) elements.resultDetailTitle.textContent = "집중 개선 필요 구간";

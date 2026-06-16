@@ -131,7 +131,7 @@ function ensureSummarySheets_(spreadsheet) {
   const readme = spreadsheet.getSheetByName(SHEETS.readme) || spreadsheet.insertSheet(SHEETS.readme);
   if (readme.getRange("A1").getValue() !== "Tab") {
     readme.clear();
-    readme.getRange(1, 1, 12, 2).setValues([
+    readme.getRange(1, 1, 13, 2).setValues([
       ["Tab", "Purpose"],
       ["events_raw", "Append-only log of section views, clicks, hover interest, demo workflow, survey answers, and CTA actions."],
       ["waitlist", "Email signups from the release notification modal. Do not share publicly if raw emails should remain private."],
@@ -143,6 +143,7 @@ function ensureSummarySheets_(spreadsheet) {
       ["Reference workflow", "action_paste_youtubelink, click_previeworiginal, click_yesanalyze, click_changeURL."],
       ["Survey workflow", "click_surveyquestion_karaokeUse/deviceContext/appInstall/resultPriority."],
       ["Analysis workflow", "action_analysis_started, action_analysis_completed, action_analysis_failed, action_result_unlocked."],
+      ["Result engagement", "click_result_highlight_prev/next, click_result_play_take/original, view_result_highlight_1/2."],
       ["CTA workflow", "click_cta_button, click_submit_email, action_submit_email_success."]
     ]);
   }
