@@ -55,6 +55,8 @@
   function cacheElements() {
     elements = {
       themeToggle: document.getElementById("themeToggle"),
+      menuToggle: document.getElementById("menuToggle"),
+      primaryNav: document.getElementById("primaryNav"),
       settingsButton: document.getElementById("settingsButton"),
       settingsModal: document.getElementById("settingsModal"),
       modal: document.getElementById("revealModal"),
@@ -91,6 +93,7 @@
       
       result: document.getElementById("result"),
       resultLayout: document.getElementById("resultLayout"),
+      playbackPreviewPanel: document.getElementById("playbackPreviewPanel"),
       overallScore: document.getElementById("overallScore"),
       metricGrid: document.getElementById("metricGrid"),
       feedbackList: document.getElementById("feedbackList"),
@@ -232,11 +235,64 @@
 
   function initLandingInteractions() {
     initRevealAnimations();
+    initMobileNav();
+    alignInitialHashTarget();
     initBuilderPreview();
     initSettingsModal();
     initAnalytics();
     initModal();
     initWaitlistForm();
+  }
+
+  function alignInitialHashTarget() {
+    if (!window.location.hash) return;
+
+    function scrollToHash() {
+      var id = window.location.hash.slice(1);
+      if (!id) return;
+
+      try {
+        id = decodeURIComponent(id);
+      } catch (error) {
+        return;
+      }
+
+      var target = document.getElementById(id);
+      if (target) target.scrollIntoView({ block: "start" });
+    }
+
+    window.setTimeout(scrollToHash, 80);
+    window.addEventListener("load", function () {
+      window.setTimeout(scrollToHash, 120);
+    }, { once: true });
+  }
+
+  function initMobileNav() {
+    if (!elements.menuToggle || !elements.primaryNav) return;
+
+    function closeMenu() {
+      elements.primaryNav.classList.remove("is-open");
+      elements.menuToggle.classList.remove("is-open");
+      elements.menuToggle.setAttribute("aria-expanded", "false");
+    }
+
+    elements.menuToggle.addEventListener("click", function () {
+      var isOpen = elements.primaryNav.classList.toggle("is-open");
+      elements.menuToggle.classList.toggle("is-open", isOpen);
+      elements.menuToggle.setAttribute("aria-expanded", String(isOpen));
+    });
+
+    elements.primaryNav.querySelectorAll("a").forEach(function (link) {
+      link.addEventListener("click", closeMenu);
+    });
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") closeMenu();
+    });
+
+    window.addEventListener("resize", function () {
+      if (window.innerWidth > 767) closeMenu();
+    });
   }
 
   function initRevealAnimations() {
@@ -525,6 +581,9 @@
     if (takeFile) {
       elements.resultTakeFileName.textContent = takeFile.name;
       elements.resultTakeMeta.textContent = formatBytes(takeFile.size);
+      if (elements.takeAudioPreview) {
+        elements.takeAudioPreview.classList.add("is-hidden");
+      }
       
       // Update result target audio
       var targetTakeAudioPlayer = document.getElementById("resultTakeAudioPlayer");
@@ -538,6 +597,12 @@
       elements.resultYoutubeEmbed.src = youtubeEmbedUrl(flowState.youtubeVideoId);
       elements.resultYoutubeLink.href = flowState.youtubeUrl;
       elements.resultYoutubeLink.textContent = flowState.youtubeUrl;
+    }
+
+    if (elements.playbackPreviewPanel) {
+      elements.playbackPreviewPanel.classList.remove("is-hidden");
+      var previewCard = elements.playbackPreviewPanel.closest(".workspace__card");
+      if (previewCard) previewCard.classList.add("has-playback-preview");
     }
     
     elements.metricGrid.innerHTML = metrics.map(metricCard).join("");
@@ -715,7 +780,7 @@
     fetch(apiBaseUrl() + "/health")
       .then(parseResponse)
       .then(function (payload) {
-        setHealth("Backend OK: " + payload.status + " (" + payload.environment + ")", "good");
+        setHealth("백엔드 정상: " + payload.status + " (" + payload.environment + ")", "good");
       })
       .catch(function (error) {
         setHealth("연결 실패: " + error.message, "error");
@@ -938,6 +1003,11 @@
     elements.feedbackList.innerHTML = "";
     elements.warningList.innerHTML = "";
     elements.warningBox.classList.add("is-hidden");
+    if (elements.playbackPreviewPanel) {
+      elements.playbackPreviewPanel.classList.add("is-hidden");
+      var previewCard = elements.playbackPreviewPanel.closest(".workspace__card");
+      if (previewCard) previewCard.classList.remove("has-playback-preview");
+    }
     elements.resultTakeFileName.textContent = "Cover recording";
     elements.resultTakeMeta.textContent = "Selected audio appears here.";
     

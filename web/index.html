@@ -9,8 +9,11 @@
   <meta property="og:title" content="코노프로 - 코인 노래방 보컬 연습 앱">
   <meta property="og:description" content="녹음만 하면 원곡 대비 피치와 지난 연습 대비 성장을 자동 분석. 출시 알림 신청 오픈.">
   <meta property="og:type" content="website">
+  <meta property="og:image" content="images/a_cozy_high_end_professional_vocal_recording_studio_at_night._warm_amber.png">
   <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="images/a_cozy_high_end_professional_vocal_recording_studio_at_night._warm_amber.png">
   <title>KonoPro | 코인 노래방 보컬 분석 앱</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23231916'/%3E%3Ctext x='32' y='41' text-anchor='middle' font-size='28' font-family='Arial,sans-serif' font-weight='800' fill='%23ce5f27'%3EK%3C/text%3E%3C/svg%3E">
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,12 +33,17 @@
       <a href="#hero" class="navbar__logo">
         Kono<span>Pro</span>
       </a>
-      <nav class="navbar__menu">
+      <nav class="navbar__menu" id="primaryNav" aria-label="주요 내비게이션">
         <a href="#problem" class="navbar__link">노래방의 문제점</a>
         <a href="#solution" class="navbar__link">해결 방법</a>
         <a href="#analyze" class="navbar__link navbar__link--cta">데모 체험하기</a>
       </nav>
       <div class="navbar__actions">
+        <button class="navbar__menu-toggle" id="menuToggle" type="button" aria-label="메뉴 열기" aria-controls="primaryNav" aria-expanded="false">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
         <button class="theme-toggle" id="themeToggle" type="button" aria-label="다크 모드로 전환" aria-pressed="false">
           <svg class="theme-toggle__icon theme-toggle__icon--sun" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path></svg>
           <svg class="theme-toggle__icon theme-toggle__icon--moon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 7.5A9 9 0 1 1 12 3Z"></path></svg>
@@ -52,9 +60,9 @@
     <!-- Hero Section -->
     <section class="hero" id="hero">
       <div class="hero__content">
-        <div class="hero__badge reveal">Vocal Practice Reinvented</div>
+        <div class="hero__badge reveal">노래 연습을 다시 설계하다</div>
         <h1 class="hero__title reveal">
-          방금 부른 노래,<br><em>늘었는지 안 늘었는지 알려드릴게요.</em>
+          방금 부른 노래,<br><em>늘었는지 안 늘었는지 <span class="hero__nowrap">알려드릴게요.</span></em>
         </h1>
         <p class="hero__subtitle reveal">
           코인 노래방을 내 보컬 스튜디오로. 녹음만 하면, 원곡 대비 피치와 지난 연습 대비 성장을 자동 분석합니다.
@@ -69,7 +77,7 @@
     <!-- Problem Section -->
     <section class="section section--alt" id="problem">
       <div class="section__header reveal">
-        <span class="section__label">The Problem</span>
+        <span class="section__label">문제점</span>
         <h2 class="section__title">지금 당신의 피드백, 믿을 수 있나요?</h2>
       </div>
 
@@ -109,7 +117,7 @@
     <!-- Solution Section -->
     <section class="section" id="solution">
       <div class="section__header reveal">
-        <span class="section__label">Core Features</span>
+        <span class="section__label">핵심 기능</span>
         <h2 class="section__title">노래방 한 곡이 성장 데이터로 쌓입니다</h2>
         <p class="section__desc">녹음·분석·비교를 자동으로 처리해, 연습이 그대로 내 성장 기록이 되게 합니다.</p>
       </div>
@@ -162,7 +170,7 @@
     <section class="workspace" id="analyze" aria-labelledby="analyzeTitle">
       <div class="workspace__shell">
         <div class="section__header reveal">
-          <span class="section__label">Analysis Demo</span>
+          <span class="section__label">분석 데모</span>
           <h2 class="section__title" id="analyzeTitle">원곡 대비 보컬 분석 체험하기</h2>
           <p class="section__desc">유튜브 원곡 URL과 내 노래 녹음 파일을 입력하면, 실시간으로 상세 피치 및 성장을 분석합니다.</p>
         </div>
@@ -216,6 +224,24 @@
                   </div>
                 </div>
 
+                <!-- Playback previews stay visible so users can stop/seek A/B playback -->
+                <div class="result-players-grid playback-preview-panel is-hidden" id="playbackPreviewPanel">
+                  <article class="result-card result-card--upload">
+                    <span class="section__label">내 녹음</span>
+                    <h4 id="resultTakeFileName" class="audio-filename">Cover recording</h4>
+                    <p id="resultTakeMeta" class="audio-meta">Selected audio appears here.</p>
+                    <audio id="resultTakeAudioPlayer" controls preload="metadata"></audio>
+                  </article>
+
+                  <article class="result-card result-card--reference">
+                    <span class="section__label">원곡</span>
+                    <div class="youtube-embed youtube-embed--result">
+                      <iframe id="resultYoutubeEmbed" title="Confirmed original song" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+                    </div>
+                    <a class="reference-confirm__url" id="resultYoutubeLink" href="#" target="_blank" rel="noopener">Open YouTube</a>
+                  </article>
+                </div>
+
                 <!-- Submit / Control Buttons -->
                 <div class="workspace__actions">
                   <button class="btn btn--primary btn--full" type="submit" id="submitButton">
@@ -247,7 +273,12 @@
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h3l2-6 4 12 2-6h5"></path><path d="M4 19h16"></path></svg>
                 </div>
                 <h3 class="empty-state-title">분석 결과 대기 중</h3>
-                <p class="empty-state-desc">왼쪽 패널에 유튜브 링크와 목소리 파일을 업로드한 뒤 '분석 시작하기'를 누르면 이곳에 정밀 보고서가 렌더링됩니다.</p>
+                  <p class="empty-state-desc">왼쪽 패널에 유튜브 링크와 목소리 파일을 업로드한 뒤 '분석 시작하기'를 누르면 이곳에 정밀 보고서가 렌더링됩니다.</p>
+                  <div class="empty-state-preview" aria-hidden="true">
+                    <span>종합 점수</span>
+                    <span>문제 구간 2개</span>
+                    <span>A/B 재생</span>
+                  </div>
               </div>
 
               <!-- State B: Processing Timeline / Loading Progress -->
@@ -276,7 +307,7 @@
                 <!-- Result Header / Overall Score -->
                 <div class="result-header">
                   <div class="result-header__title-area">
-                    <span class="section__label">Analysis Report</span>
+                    <span class="section__label">분석 리포트</span>
                     <h3 class="analysis-result__title" id="resultTitle">피치 및 타이밍 분석 완료</h3>
                   </div>
                   <div class="result-header__score-container">
@@ -297,24 +328,6 @@
                     <div class="bad-moments__container" id="badMomentsContainer">
                       <!-- Moments will be dynamically rendered here -->
                     </div>
-                  </div>
-
-                  <!-- Playback elements -->
-                  <div class="result-players-grid">
-                    <article class="result-card result-card--upload">
-                      <span class="section__label">My Audio Take</span>
-                      <h4 id="resultTakeFileName" class="audio-filename">Cover recording</h4>
-                      <p id="resultTakeMeta" class="audio-meta">Selected audio appears here.</p>
-                      <audio id="resultTakeAudioPlayer" controls preload="metadata"></audio>
-                    </article>
-
-                    <article class="result-card result-card--reference">
-                      <span class="section__label">Original Reference</span>
-                      <div class="youtube-embed youtube-embed--result">
-                        <iframe id="resultYoutubeEmbed" title="Confirmed original song" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
-                      </div>
-                      <a class="reference-confirm__url" id="resultYoutubeLink" href="#" target="_blank" rel="noopener">Open YouTube</a>
-                    </article>
                   </div>
 
                   <!-- Text Coach Feedback -->
@@ -360,7 +373,12 @@
       <div class="cta-banner__content reveal">
         <h2 class="cta-banner__title">이제, 내 성장이 보일 차례</h2>
         <p class="cta-banner__text">첫 달 무료 코드와 함께 정식 서비스 출시 소식을 받아보세요.</p>
-        <button type="button" class="btn btn--primary js-track-cta js-open-reveal" data-event="click_cta_button" data-section="site_CTA">출시 소식 이메일로 받기</button>
+        <div class="cta-banner__proof" aria-label="출시 알림 혜택">
+          <span>첫 달 무료 코드</span>
+          <span>베타테스터 우선 안내</span>
+          <span>출시 소식 1회 알림</span>
+        </div>
+        <button type="button" class="btn btn--primary js-track-cta js-open-reveal" data-event="click_cta_button" data-section="site_CTA">출시 알림 받기</button>
       </div>
     </section>
 
@@ -382,28 +400,28 @@
     <div class="reveal-modal__overlay" data-close-settings-modal></div>
     <div class="reveal-modal__content settings-modal__content" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <button type="button" class="reveal-modal__close" aria-label="닫기" data-close-settings-modal>&times;</button>
-      <span class="section__label">Demo Settings</span>
+      <span class="section__label">데모 설정</span>
       <h2 class="reveal-modal__title" id="settingsTitle">데모 테스터 설정</h2>
       <p class="reveal-modal__message">로컬 베타 테스트용 백엔드 주소와 테스터 키 설정입니다.</p>
 
       <div class="settings-modal__status">
-        <p class="health-status" id="healthStatus" role="status" aria-live="polite">Backend: not checked</p>
+        <p class="health-status" id="healthStatus" role="status" aria-live="polite">백엔드: 확인 전</p>
         <button class="btn btn--outline" type="button" id="healthCheckButton">연결 확인</button>
       </div>
 
       <div class="settings-form">
         <div class="settings-form__field">
-          <label for="apiBaseUrl">Backend URL</label>
+          <label for="apiBaseUrl">백엔드 주소</label>
           <input id="apiBaseUrl" name="apiBaseUrl" type="url" value="http://127.0.0.1:8000" autocomplete="url" class="form-input">
         </div>
 
         <div class="settings-form__field">
-          <label for="betaUserKey">Tester ID</label>
+          <label for="betaUserKey">테스터 ID</label>
           <input id="betaUserKey" name="betaUserKey" type="text" autocomplete="email" required class="form-input">
         </div>
 
         <div class="settings-form__field">
-          <label for="googleDbUrl">Google DB URL</label>
+          <label for="googleDbUrl">Google DB 주소</label>
           <input id="googleDbUrl" name="googleDbUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="url" class="form-input">
         </div>
       </div>
@@ -436,10 +454,10 @@
   </div>
 
   <!-- CDN scripts -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/vanta@latest/dist/vanta.net.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/vanta@latest/dist/vanta.net.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
   
-  <script src="templatemo-frost-script.js"></script>
+  <script defer src="templatemo-frost-script.js"></script>
 </body>
 </html>
