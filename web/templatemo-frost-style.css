@@ -1767,8 +1767,8 @@ body[data-theme="dark"] .hero__actions .btn--outline {
 }
 
 .result-detail-carousel__button {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-color);
   background: rgba(255, 255, 255, 0.72);
@@ -1869,10 +1869,10 @@ body[data-theme="dark"] .hero__actions .btn--outline {
   background: rgba(255, 245, 238, 0.78);
   border: 1px solid rgba(206, 95, 39, 0.18);
   border-radius: var(--radius-md);
-  padding: 20px;
+  padding: 22px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   position: relative;
   transition: var(--transition-fast);
 }
@@ -1895,7 +1895,7 @@ body[data-theme="dark"] .hero__actions .btn--outline {
 }
 
 .moment-title {
-  font-size: 0.9rem;
+  font-size: 1rem;
   font-weight: 700;
   color: var(--text-main);
 }
@@ -1917,22 +1917,25 @@ body[data-theme="dark"] .hero__actions .btn--outline {
 }
 
 .moment-description {
-  font-size: 0.82rem;
+  font-size: 0.9rem;
   color: var(--text-muted);
 }
 
 .moment-actions {
   display: flex;
-  gap: 10px;
+  gap: 12px;
 }
 
 .btn-play-clip {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 6px 12px;
-  font-size: 0.78rem;
-  font-weight: 600;
+  min-height: 52px;
+  flex: 1 1 0;
+  padding: 12px 16px;
+  font-size: 0.98rem;
+  font-weight: 750;
   border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid var(--border-color);
@@ -1947,6 +1950,38 @@ body[data-theme="dark"] .hero__actions .btn--outline {
 
 .btn-play-clip svg {
   flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.moment-coach {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 150px;
+  margin-top: 6px;
+  padding: 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(206, 95, 39, 0.2);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.moment-coach__label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--primary);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.moment-coach__text {
+  color: var(--text-main);
+  font-size: 1.64rem;
+  font-weight: 750;
+  line-height: 1.28;
 }
 
 /* Result Players section (Take/Reference targets) */
@@ -2577,6 +2612,11 @@ body[data-theme="dark"] .moment-card:hover {
   border-color: rgba(255, 64, 129, 0.34);
 }
 
+body[data-theme="dark"] .moment-coach {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 64, 129, 0.18);
+}
+
 body[data-theme="dark"] .result-workspace-card.is-survey-focus {
   border-color: rgba(244, 193, 77, 0.56);
   box-shadow: 0 0 0 1px rgba(244, 193, 77, 0.2), 0 0 42px rgba(244, 193, 77, 0.28), 0 24px 70px rgba(0, 0, 0, 0.48);
@@ -2898,8 +2938,8 @@ body[data-theme="dark"] .reveal-modal__overlay {
   }
 
   .result-detail-carousel__button {
-    width: 30px;
-    height: 30px;
+    width: 40px;
+    height: 40px;
   }
 
   .result-detail-carousel__dots {
@@ -2950,6 +2990,11 @@ body[data-theme="dark"] .reveal-modal__overlay {
     gap: 6px;
   }
 
+  .result-detail-card--moment .moment-card {
+    padding: 12px;
+    gap: 10px;
+  }
+
   .moment-title {
     font-size: 0.78rem;
   }
@@ -2974,6 +3019,27 @@ body[data-theme="dark"] .reveal-modal__overlay {
   .btn-play-clip {
     padding: 4px 7px;
     font-size: 0.66rem;
+  }
+
+  .result-detail-card--moment .btn-play-clip {
+    min-height: 52px;
+    padding: 10px 12px;
+    font-size: 1rem;
+  }
+
+  .result-detail-card--moment .moment-coach {
+    min-height: 138px;
+    padding: 12px;
+  }
+
+  .result-detail-card--moment .moment-coach__label {
+    margin-bottom: 5px;
+    font-size: 0.7rem;
+  }
+
+  .result-detail-card--moment .moment-coach__text {
+    font-size: 1.5rem;
+    line-height: 1.24;
   }
 
   .result-card {
@@ -3656,5 +3722,9 @@ body[data-theme="dark"] .reveal-modal__overlay {
   .btn-play-clip {
     width: 100%;
     justify-content: center;
+  }
+
+  .result-detail-card--moment .moment-coach__text {
+    font-size: 1.36rem;
   }
 }

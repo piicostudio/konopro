@@ -995,7 +995,7 @@
 
   function renderResultDetailCarousel(scoringRun, scores) {
     var moments = buildABMoments(scores);
-    var feedback = scoringRun.feedback || [];
+    var feedbackItems = normalizedCoachFeedbackItems(scoringRun.feedback || []);
     var warnings = scoringRun.warnings || [];
 
     resultDetailSlides = moments.map(function (moment, index) {
@@ -1009,16 +1009,8 @@
         clipStartSeconds: moment.startSeconds,
         timestamp: moment.timestamp,
         deviation: moment.deviation,
-        html: renderMomentSlide(moment)
+        html: renderMomentSlide(moment, feedbackItems[index])
       };
-    });
-
-    resultDetailSlides.push({
-      title: "코치 피드백",
-      desc: "이번 분석에서 가장 먼저 확인할 연습 방향입니다.",
-      type: "feedback",
-      isHighlightSlide: false,
-      html: renderFeedbackSlide(feedback)
     });
 
     if (showDeveloperWarnings() && warnings.length) {
@@ -1044,7 +1036,8 @@
     showResultDetailSlide(0);
   }
 
-  function renderMomentSlide(m) {
+  function renderMomentSlide(m, feedback) {
+    var coachFeedback = feedback || "이 구간을 원곡과 번갈아 들으며 차이를 줄여보세요.";
     return (
       '<article class="result-detail-card result-detail-card--moment">' +
         '<div class="moment-card">' +
@@ -1066,16 +1059,17 @@
         '      원곡 재생' +
         '    </button>' +
         '  </div>' +
+        '  <div class="moment-coach">' +
+        '    <span class="moment-coach__label">코치 피드백</span>' +
+        '    <p class="moment-coach__text">' + escapeHtml(coachFeedback) + '</p>' +
+        '  </div>' +
         '</div>' +
       '</article>'
     );
   }
 
   function renderFeedbackSlide(feedback) {
-    var safeItems = (feedback || [])
-      .map(normalizeCoachFeedback)
-      .filter(Boolean)
-      .slice(0, 2);
+    var safeItems = normalizedCoachFeedbackItems(feedback || []);
     if (!safeItems.length) {
       safeItems = ["이번 결과에서 가장 낮은 항목부터 한 구간씩 다시 들어보세요."];
     }
@@ -1088,6 +1082,13 @@
         '</ul>' +
       '</article>'
     );
+  }
+
+  function normalizedCoachFeedbackItems(feedback) {
+    return (feedback || [])
+      .map(normalizeCoachFeedback)
+      .filter(Boolean)
+      .slice(0, 2);
   }
 
   function normalizeCoachFeedback(item) {
