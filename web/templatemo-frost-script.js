@@ -1500,6 +1500,18 @@
   // Analytics helper dummy functions
   function initAnalytics() {
     ensureAnalyticsSessionId();
+    bindAnalyticsClickTracking();
+    initSectionViewTracking();
+    trackEvent("view_page", "site", {
+      referrer: document.referrer || "",
+      title: document.title,
+      viewport_width: window.innerWidth,
+      viewport_height: window.innerHeight,
+      screen_width: window.screen ? window.screen.width : null,
+      screen_height: window.screen ? window.screen.height : null,
+      language: navigator.language || "",
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || ""
+    });
     flushAnalyticsQueue();
   }
 
@@ -1510,10 +1522,70 @@
       timestamp: new Date().toISOString(),
       session_id: ensureAnalyticsSessionId(),
       tester_id: betaUserKey(),
+      page_url: window.location.href,
+      path: window.location.pathname + window.location.search + window.location.hash,
+      user_agent: navigator.userAgent || "",
+      event_id: createEventId(),
       metadata: metadata || {}
     };
     enqueueAnalyticsEvent(payload);
     flushAnalyticsQueue();
+  }
+
+  function bindAnalyticsClickTracking() {
+    document.querySelectorAll("[data-event]").forEach(function (node) {
+      if (node.dataset.analyticsBound === "true") return;
+      node.dataset.analyticsBound = "true";
+      node.addEventListener("click", function () {
+        trackEvent(node.dataset.event, node.dataset.section || "site", {
+          label: node.textContent.trim(),
+          href: node.getAttribute("href") || ""
+        });
+      });
+    });
+  }
+
+  function initSectionViewTracking() {
+    var sectionMap = {
+      hero: "site_hero",
+      problem: "site_problem",
+      solution: "site_corefeature",
+      analyze: "site_MVP",
+      "cta-bottom": "site_CTA"
+    };
+    var sections = Object.keys(sectionMap)
+      .map(function (id) { return document.getElementById(id); })
+      .filter(Boolean);
+    if (!sections.length) return;
+
+    if (!("IntersectionObserver" in window)) {
+      sections.forEach(function (section) {
+        trackEvent("view_section", sectionMap[section.id], { section_id: section.id });
+      });
+      return;
+    }
+
+    var seen = {};
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting || seen[entry.target.id]) return;
+        seen[entry.target.id] = true;
+        trackEvent("view_section", sectionMap[entry.target.id], {
+          section_id: entry.target.id,
+          visible_ratio: Math.round(entry.intersectionRatio * 100) / 100
+        });
+        observer.unobserve(entry.target);
+      });
+    }, { threshold: 0.45 });
+
+    sections.forEach(function (section) {
+      observer.observe(section);
+    });
+  }
+
+  function createEventId() {
+    var randomPart = Math.random().toString(36).slice(2, 10);
+    return Date.now().toString(36) + "-" + randomPart;
   }
 
   function ensureAnalyticsSessionId() {
