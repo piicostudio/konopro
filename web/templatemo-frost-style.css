@@ -2108,6 +2108,88 @@ body[data-theme="dark"] .hero__actions .btn--outline {
   padding-left: 14px;
 }
 
+.settings-form__field--toggle {
+  margin-top: 4px;
+}
+
+.settings-form__field .settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.48);
+  color: inherit;
+  cursor: pointer;
+  font-size: inherit;
+  font-weight: inherit;
+  margin-bottom: 0;
+}
+
+.settings-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.settings-toggle__control {
+  position: relative;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: rgba(34, 24, 21, 0.12);
+  transition: var(--transition-fast);
+}
+
+.settings-toggle__control::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(43, 24, 17, 0.18);
+  transition: var(--transition-fast);
+}
+
+.settings-toggle input:checked + .settings-toggle__control {
+  border-color: rgba(22, 163, 74, 0.52);
+  background: #16a34a;
+}
+
+.settings-toggle input:checked + .settings-toggle__control::after {
+  transform: translateX(18px);
+}
+
+.settings-toggle input:focus-visible + .settings-toggle__control {
+  outline: 2px solid rgba(22, 163, 74, 0.28);
+  outline-offset: 2px;
+}
+
+.settings-toggle__copy {
+  min-width: 0;
+}
+
+.settings-toggle__label {
+  display: block;
+  color: var(--text-main);
+  font-size: 0.86rem;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.settings-toggle__hint {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
 /* ==========================================================================
    Dark Theme Overrides
    ========================================================================== */
@@ -2226,6 +2308,14 @@ body[data-theme="dark"] .result-detail-carousel__dot {
 
 body[data-theme="dark"] .result-detail-carousel__dot.is-active {
   background: var(--primary);
+}
+
+body[data-theme="dark"] .settings-toggle {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+body[data-theme="dark"] .settings-toggle__control {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 body[data-theme="dark"] .embedded-waitlist {

@@ -19,6 +19,7 @@
     apiBaseUrl: "konopro.apiBaseUrl",
     betaUserKey: "konopro.betaUserKey",
     googleDbUrl: "konopro.googleDbUrl",
+    showDeveloperWarnings: "konopro.showDeveloperWarnings",
     theme: "konopro.theme",
     analyticsSessionId: "konopro.analyticsSessionId",
     analyticsQueue: "konopro.analyticsQueue"
@@ -70,6 +71,7 @@
       apiBaseUrl: document.getElementById("apiBaseUrl"),
       betaUserKey: document.getElementById("betaUserKey"),
       googleDbUrl: document.getElementById("googleDbUrl"),
+      showDeveloperWarnings: document.getElementById("showDeveloperWarnings"),
       
       analysisForm: document.getElementById("analysisForm"),
       youtubeUrl: document.getElementById("youtubeUrl"),
@@ -135,6 +137,9 @@
     }
     if (elements.googleDbUrl) {
       elements.googleDbUrl.value = localStorage.getItem(storageKeys.googleDbUrl) || defaultGoogleDbUrl;
+    }
+    if (elements.showDeveloperWarnings) {
+      elements.showDeveloperWarnings.checked = localStorage.getItem(storageKeys.showDeveloperWarnings) === "true";
     }
     persistSettings();
   }
@@ -425,6 +430,14 @@
       persistSettings();
       flushAnalyticsQueue();
     });
+    if (elements.showDeveloperWarnings) {
+      elements.showDeveloperWarnings.addEventListener("change", function () {
+        persistSettings();
+        if (flowState.scoringRun && flowState.resultRendered) {
+          renderResultDetailCarousel(flowState.scoringRun, flowState.scoringRun.scores || {});
+        }
+      });
+    }
 
     initAudioPicker({
       key: "take",
@@ -679,7 +692,7 @@
       html: renderFeedbackSlide(feedback)
     });
 
-    if (warnings.length) {
+    if (showDeveloperWarnings() && warnings.length) {
       resultDetailSlides.push({
         title: "주의사항 " + warnings.length + "개",
         desc: "녹음이나 원곡 상태 때문에 점수 해석에 영향을 줄 수 있는 항목입니다.",
@@ -1170,6 +1183,7 @@
     if (elements.apiBaseUrl) localStorage.setItem(storageKeys.apiBaseUrl, apiBaseUrl());
     if (elements.betaUserKey) localStorage.setItem(storageKeys.betaUserKey, betaUserKey());
     if (elements.googleDbUrl) localStorage.setItem(storageKeys.googleDbUrl, googleDbUrl());
+    if (elements.showDeveloperWarnings) localStorage.setItem(storageKeys.showDeveloperWarnings, String(showDeveloperWarnings()));
   }
 
   function apiBaseUrl() {
@@ -1182,6 +1196,10 @@
 
   function googleDbUrl() {
     return elements.googleDbUrl ? elements.googleDbUrl.value.trim() : "";
+  }
+
+  function showDeveloperWarnings() {
+    return Boolean(elements.showDeveloperWarnings && elements.showDeveloperWarnings.checked);
   }
 
   function setBusy(isBusy) {
