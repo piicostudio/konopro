@@ -321,41 +321,25 @@
                   <!-- Circular Sub-Scores Grid -->
                   <div class="metric-grid" id="metricGrid"></div>
 
-                  <!-- A/B Audio Replay Clips: TOP 2 BAD MOMENTS -->
-                  <div class="bad-moments">
-                    <h4 class="section-subtitle">집중 개선 필요 구간 (Top 2 Moments)</h4>
-                    <p class="section-desc-small">음정이나 박자 편차가 컸던 상위 2개 핵심 구간입니다. 버튼을 눌러 내 소리와 원곡을 바로 들어보세요.</p>
-                    <div class="bad-moments__container" id="badMomentsContainer">
-                      <!-- Moments will be dynamically rendered here -->
+                  <!-- Fixed-height Result Detail Carousel -->
+                  <div class="result-detail-carousel" id="resultDetailCarousel" aria-label="분석 상세 카드">
+                    <div class="result-detail-carousel__top">
+                      <div>
+                        <h4 class="section-subtitle" id="resultDetailTitle">집중 개선 필요 구간</h4>
+                        <p class="section-desc-small" id="resultDetailDescription">화살표를 눌러 문제 구간, 주의사항, 출시 알림을 확인하세요.</p>
+                      </div>
+                      <div class="result-detail-carousel__controls" aria-label="상세 카드 이동">
+                        <button type="button" class="result-detail-carousel__button" id="resultDetailPrev" aria-label="이전 상세 카드">&lt;</button>
+                        <button type="button" class="result-detail-carousel__button" id="resultDetailNext" aria-label="다음 상세 카드">&gt;</button>
+                      </div>
                     </div>
-                  </div>
-
-                  <!-- Text Coach Feedback -->
-                  <div class="feedback-panel">
-                    <h4 class="section-subtitle">인공지능 코치 피드백</h4>
-                    <ul id="feedbackList" class="feedback-list"></ul>
-                    
-                    <div class="warning-box is-hidden" id="warningBox">
-                      <h4 class="section-subtitle text-warning">특이사항 (Warnings)</h4>
-                      <ul id="warningList" class="warning-list"></ul>
+                    <div class="result-detail-carousel__viewport">
+                      <div class="result-detail-carousel__slides" id="resultDetailSlides">
+                        <!-- Result detail cards are dynamically rendered here -->
+                      </div>
                     </div>
-                  </div>
-
-                  <!-- Inline Email Waitlist Signup -->
-                  <div class="embedded-waitlist">
-                    <div class="embedded-waitlist__icon">🔔</div>
-                    <div class="embedded-waitlist__content">
-                      <h4>분석 결과가 마음에 드셨나요?</h4>
-                      <p>KonoPro의 모바일 앱 정식 출시 소식과 함께 첫 달 무료 코드를 보내드릴게요!</p>
-                      
-                      <form id="inlineWaitlistForm" class="inline-waitlist-form" novalidate>
-                        <div class="inline-waitlist-field">
-                          <input id="inlineEmail" name="email" type="email" placeholder="이메일 주소를 입력하세요" required class="form-input">
-                          <button type="submit" class="btn btn--primary">신청하기</button>
-                        </div>
-                        <p id="inlineFormFeedback" class="form-feedback" role="status" aria-live="polite"></p>
-                      </form>
-                    </div>
+                    <div class="result-detail-carousel__dots" id="resultDetailDots" aria-label="상세 카드 위치"></div>
+                    <div class="result-detail-carousel__status" id="resultDetailStatus" aria-live="polite"></div>
                   </div>
 
                 </div>

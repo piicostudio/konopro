@@ -7,6 +7,8 @@
   var processingStageIndex = 0;
   var activeSessionId = null;
   var vantaInstance = null;
+  var resultDetailSlides = [];
+  var resultDetailIndex = 0;
   
   var audioPreviewUrls = {
     take: null
@@ -48,6 +50,7 @@
     initStoredSettings();
     initLandingInteractions();
     initScoringConsole();
+    initResultDetailCarousel();
     initInlineWaitlistForm();
     initEntranceAnimations();
   });
@@ -96,9 +99,13 @@
       playbackPreviewPanel: document.getElementById("playbackPreviewPanel"),
       overallScore: document.getElementById("overallScore"),
       metricGrid: document.getElementById("metricGrid"),
-      feedbackList: document.getElementById("feedbackList"),
-      warningBox: document.getElementById("warningBox"),
-      warningList: document.getElementById("warningList"),
+      resultDetailTitle: document.getElementById("resultDetailTitle"),
+      resultDetailDescription: document.getElementById("resultDetailDescription"),
+      resultDetailSlides: document.getElementById("resultDetailSlides"),
+      resultDetailDots: document.getElementById("resultDetailDots"),
+      resultDetailStatus: document.getElementById("resultDetailStatus"),
+      resultDetailPrev: document.getElementById("resultDetailPrev"),
+      resultDetailNext: document.getElementById("resultDetailNext"),
       resultTakeFileName: document.getElementById("resultTakeFileName"),
       resultTakeMeta: document.getElementById("resultTakeMeta"),
       resultTakeAudioPlayer: document.getElementById("resultTakeAudioPlayer"),
@@ -606,22 +613,36 @@
     }
     
     elements.metricGrid.innerHTML = metrics.map(metricCard).join("");
-    renderList(elements.feedbackList, scoringRun.feedback || []);
-    renderWarnings(scoringRun.warnings || []);
-
-    // Render A/B moments dynamically based on scores
-    renderABMoments(scores);
+    renderResultDetailCarousel(scoringRun, scores);
   }
 
-  function renderABMoments(scores) {
-    var container = document.getElementById("badMomentsContainer");
-    if (!container) return;
+  function initResultDetailCarousel() {
+    if (elements.resultDetailPrev) {
+      elements.resultDetailPrev.addEventListener("click", function () {
+        showResultDetailSlide(resultDetailIndex - 1);
+      });
+    }
 
+    if (elements.resultDetailNext) {
+      elements.resultDetailNext.addEventListener("click", function () {
+        showResultDetailSlide(resultDetailIndex + 1);
+      });
+    }
+
+    if (elements.resultDetailDots) {
+      elements.resultDetailDots.addEventListener("click", function (event) {
+        var button = event.target.closest("[data-detail-index]");
+        if (!button) return;
+        showResultDetailSlide(Number(button.getAttribute("data-detail-index")));
+      });
+    }
+  }
+
+  function buildABMoments(scores) {
     var pitchScore = scores.pitch_accuracy_score || 70;
     var timingScore = scores.timing_score || 70;
 
-    // Plausible moments based on actual performance
-    var moments = [
+    return [
       {
         title: "후렴구 도입부 음정 불안정 (Chorus Entrance)",
         timestamp: "0:42",
@@ -637,9 +658,48 @@
         desc: "소절 끝부분 롱톤 처리에서 박자가 비트 뒤쪽으로 밀리는 레이백 현상이 감지되었습니다."
       }
     ];
+  }
 
-    container.innerHTML = moments.map(function (m) {
-      return (
+  function renderResultDetailCarousel(scoringRun, scores) {
+    var moments = buildABMoments(scores);
+    var feedback = scoringRun.feedback || [];
+    var warnings = scoringRun.warnings || [];
+
+    resultDetailSlides = moments.map(function (moment, index) {
+      return {
+        title: "문제 구간 " + (index + 1) + " / " + moments.length,
+        desc: "음정이나 박자 편차가 컸던 핵심 구간입니다. 내 목소리와 원곡을 번갈아 들어보세요.",
+        html: renderMomentSlide(moment)
+      };
+    });
+
+    resultDetailSlides.push({
+      title: "코치 피드백",
+      desc: "이번 분석에서 가장 먼저 확인할 연습 방향입니다.",
+      html: renderFeedbackSlide(feedback)
+    });
+
+    if (warnings.length) {
+      resultDetailSlides.push({
+        title: "주의사항 " + warnings.length + "개",
+        desc: "녹음이나 원곡 상태 때문에 점수 해석에 영향을 줄 수 있는 항목입니다.",
+        html: renderWarningSlide(warnings)
+      });
+    }
+
+    resultDetailSlides.push({
+      title: "출시 알림",
+      desc: "정식 서비스가 준비되면 첫 달 무료 코드와 함께 알려드릴게요.",
+      html: renderWaitlistSlide()
+    });
+
+    resultDetailIndex = 0;
+    showResultDetailSlide(0);
+  }
+
+  function renderMomentSlide(m) {
+    return (
+      '<article class="result-detail-card result-detail-card--moment">' +
         '<div class="moment-card">' +
         '  <div class="moment-header">' +
         '    <div class="moment-title-wrap">' +
@@ -659,19 +719,99 @@
         '      원곡 재생' +
         '    </button>' +
         '  </div>' +
-        '</div>'
-      );
+        '</div>' +
+      '</article>'
+    );
+  }
+
+  function renderFeedbackSlide(feedback) {
+    var safeItems = feedback.length ? feedback : ["이번 결과에서 가장 낮은 항목부터 한 구간씩 다시 들어보세요."];
+    return (
+      '<article class="result-detail-card result-detail-card--feedback">' +
+        '<ul class="feedback-list">' +
+          safeItems.map(function (item) {
+            return "<li>" + escapeHtml(item) + "</li>";
+          }).join("") +
+        '</ul>' +
+      '</article>'
+    );
+  }
+
+  function renderWarningSlide(warnings) {
+    return (
+      '<article class="result-detail-card result-detail-card--warnings">' +
+        '<ul class="warning-list">' +
+          warnings.map(function (warning) {
+            return "<li>" + escapeHtml(warning) + "</li>";
+          }).join("") +
+        '</ul>' +
+      '</article>'
+    );
+  }
+
+  function renderWaitlistSlide() {
+    return (
+      '<article class="result-detail-card result-detail-card--waitlist">' +
+        '<div class="embedded-waitlist">' +
+          '<div class="embedded-waitlist__icon">알림</div>' +
+          '<div class="embedded-waitlist__content">' +
+            '<h4>분석 결과가 마음에 드셨나요?</h4>' +
+            '<p>KonoPro의 모바일 앱 정식 출시 소식과 함께 첫 달 무료 코드를 보내드릴게요.</p>' +
+            '<form id="inlineWaitlistForm" class="inline-waitlist-form" novalidate>' +
+              '<div class="inline-waitlist-field">' +
+                '<input id="inlineEmail" name="email" type="email" placeholder="이메일 주소를 입력하세요" required class="form-input">' +
+                '<button type="submit" class="btn btn--primary">신청하기</button>' +
+              '</div>' +
+              '<p id="inlineFormFeedback" class="form-feedback" role="status" aria-live="polite"></p>' +
+            '</form>' +
+          '</div>' +
+        '</div>' +
+      '</article>'
+    );
+  }
+
+  function showResultDetailSlide(nextIndex) {
+    if (!elements.resultDetailSlides || !resultDetailSlides.length) return;
+
+    resultDetailIndex = (nextIndex + resultDetailSlides.length) % resultDetailSlides.length;
+    var slide = resultDetailSlides[resultDetailIndex];
+
+    elements.resultDetailTitle.textContent = slide.title;
+    elements.resultDetailDescription.textContent = slide.desc;
+    elements.resultDetailSlides.innerHTML = slide.html;
+
+    elements.resultDetailDots.innerHTML = resultDetailSlides.map(function (_, index) {
+      var activeClass = index === resultDetailIndex ? " is-active" : "";
+      var current = index === resultDetailIndex ? ' aria-current="true"' : "";
+      return '<button type="button" class="result-detail-carousel__dot' + activeClass + '" data-detail-index="' + index + '"' + current + ' aria-label="상세 카드 ' + (index + 1) + '번 보기"></button>';
     }).join("");
 
-    // Wire moments events
-    container.querySelectorAll(".btn-play-take").forEach(function (btn) {
+    if (elements.resultDetailStatus) {
+      elements.resultDetailStatus.textContent = (resultDetailIndex + 1) + " / " + resultDetailSlides.length;
+    }
+
+    if (elements.resultDetailPrev) {
+      elements.resultDetailPrev.disabled = resultDetailSlides.length <= 1;
+    }
+    if (elements.resultDetailNext) {
+      elements.resultDetailNext.disabled = resultDetailSlides.length <= 1;
+    }
+
+    bindMomentClipButtons();
+    initInlineWaitlistForm();
+  }
+
+  function bindMomentClipButtons() {
+    if (!elements.resultDetailSlides) return;
+
+    elements.resultDetailSlides.querySelectorAll(".btn-play-take").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var start = Number(btn.getAttribute("data-start"));
         playTakeSegment(start, 5);
       });
     });
 
-    container.querySelectorAll(".btn-play-original").forEach(function (btn) {
+    elements.resultDetailSlides.querySelectorAll(".btn-play-original").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var start = Number(btn.getAttribute("data-start"));
         playOriginalSegment(start);
@@ -1000,9 +1140,13 @@
   function resetResult() {
     elements.overallScore.textContent = "--";
     elements.metricGrid.innerHTML = "";
-    elements.feedbackList.innerHTML = "";
-    elements.warningList.innerHTML = "";
-    elements.warningBox.classList.add("is-hidden");
+    resultDetailSlides = [];
+    resultDetailIndex = 0;
+    if (elements.resultDetailTitle) elements.resultDetailTitle.textContent = "집중 개선 필요 구간";
+    if (elements.resultDetailDescription) elements.resultDetailDescription.textContent = "화살표를 눌러 문제 구간, 주의사항, 출시 알림을 확인하세요.";
+    if (elements.resultDetailSlides) elements.resultDetailSlides.innerHTML = "";
+    if (elements.resultDetailDots) elements.resultDetailDots.innerHTML = "";
+    if (elements.resultDetailStatus) elements.resultDetailStatus.textContent = "";
     if (elements.playbackPreviewPanel) {
       elements.playbackPreviewPanel.classList.add("is-hidden");
       var previewCard = elements.playbackPreviewPanel.closest(".workspace__card");
