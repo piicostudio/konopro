@@ -90,5 +90,7 @@ def test_coach_feedback_generates_explanation_and_problem_moments(tmp_path, monk
     assert not moments[1].empty
     assert moments[6]["available"] is True
     assert len(moments[6]["moments"]) <= 2
+    assert "cents" in moments[6]["moments"][0]["practice_tip"]
+    assert "target pitch" not in moments[2]
     assert moments[3] is not None
     assert Path(moments[3]).exists()

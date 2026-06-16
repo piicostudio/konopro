@@ -108,7 +108,7 @@ CONTOUR_SCORE_KWARGS = {
     "dtw_band_radius": 0.06,
     "max_dtw_frames": 2400,
     "pitch_error_penalty": 0.70,
-    "stability_penalty": 1.10,
+    "stability_penalty": 0.20,
     "timing_penalty": 90.0,
     "transposition_warning_cents": 90.0,
 }
@@ -121,10 +121,24 @@ SYMBOLIC_SCORE_KWARGS = {
     },
     "note_coverage_min_ratio": 0.35,
     "pitch_error_penalty": 0.70,
-    "stability_penalty": 1.10,
+    "stability_penalty": 0.20,
     "timing_offset_penalty": 180.0,
     "transposition_warning_cents": 90.0,
 }
+
+
+def _default_demucs_device() -> str:
+    if importlib.util.find_spec("torch") is None:
+        return "cpu"
+    try:
+        import torch
+
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
+DEFAULT_DEMUCS_DEVICE = _default_demucs_device()
 
 
 def _human_slot_name(label: str) -> str:
@@ -1003,6 +1017,22 @@ def _score_warnings(score: dict[str, Any]) -> list[str]:
     return []
 
 
+def _format_cents(value: float) -> str:
+    return f"{abs(float(value)):.0f} cents"
+
+
+def _format_ms(seconds: float) -> str:
+    return f"{abs(float(seconds) * 1000.0):.0f} ms"
+
+
+def _pitch_direction(value_cents: float) -> str:
+    if value_cents > 20.0:
+        return "above"
+    if value_cents < -20.0:
+        return "below"
+    return "away from"
+
+
 def _primary_coach_issue(
     score: dict[str, Any],
     timing_debug: dict[str, Any] | None,
@@ -1015,6 +1045,7 @@ def _primary_coach_issue(
     confidence = _score_float(score, "recording_confidence_score", 100.0)
     stability_cents = _score_float(score, "pitch_stability_cents", np.nan)
     mean_error = _score_float(score, "mean_pitch_error_cents", np.nan)
+    global_offset = _score_float(score, "timing_offset_s", 0.0)
     local_timing = (
         _score_float(timing_debug or {}, "median_abs_local_error_s", 0.0)
         if isinstance(timing_debug, dict)
@@ -1029,12 +1060,17 @@ def _primary_coach_issue(
     if confidence < 55 or coverage < 45:
         return (
             "recording_confidence",
-            "The analysis may be unreliable because the vocal signal is weak or too little singing was detected.",
+            f"The app detected only about {coverage:.0f}% of the expected vocal frames. Record a clearer take before judging the score.",
         )
     if timing < 65 or local_timing > 0.18:
+        timing_text = (
+            f"Your timing differs from the reference by about {_format_ms(local_timing)} on average."
+            if local_timing > 0
+            else f"Your take starts about {_format_ms(global_offset)} from the reference."
+        )
         return (
             "timing",
-            "The biggest issue appears to be timing: the scorer is often comparing different parts of the phrase.",
+            timing_text,
         )
     if pitch < 65 and np.isfinite(mean_error):
         return (
@@ -1044,12 +1080,12 @@ def _primary_coach_issue(
     if stability < 65 and np.isfinite(stability_cents):
         if np.isfinite(p95_residual) and p95_residual > 500:
             return (
-                "spiky_residuals",
-                "The stability score is being driven by a few very large residual spikes, so inspect those moments before judging vocal steadiness.",
+                "analysis_check",
+                "A few very large pitch spikes are affecting the score. Listen to the highlighted A/B clips first.",
             )
         return (
             "pitch_consistency",
-            f"The main practice target is consistency: residual pitch errors vary by about {stability_cents:.0f} cents.",
+            f"The main practice target is pitch consistency. Pitch errors vary by about {stability_cents:.0f} cents.",
         )
     return (
         "polish",
@@ -1059,12 +1095,12 @@ def _primary_coach_issue(
 
 def _practice_tip_for_issue(issue: str) -> str:
     tips = {
-        "recording_confidence": "Retest with a louder vocal, less backing-track bleed, or a cleaner vocal stem before making musical conclusions.",
-        "timing": "Practice entering the phrase with the reference at a slower speed, then repeat at full tempo.",
-        "pitch_accuracy": "Loop the phrase slowly and match the target pitch before adding full karaoke timing.",
-        "pitch_consistency": "Sustain the problem notes on a vowel and reduce wobble before singing the full phrase.",
-        "spiky_residuals": "Listen to the timestamped clips first; the issue may be timing or pitch extraction, not vocal shakiness.",
-        "polish": "Pick one timestamped phrase and repeat it until the pitch trace stays close for the whole line.",
+        "recording_confidence": "Record again with a clearer vocal, then re-run the score.",
+        "timing": "Practice the highlighted moments where your timing is farthest from the reference.",
+        "pitch_accuracy": "Practice the highlighted moments where your notes are farthest from the reference melody.",
+        "pitch_consistency": "Practice the highlighted moments where your pitch moves too much within the phrase.",
+        "analysis_check": "Listen to the A/B clips first; these spikes may come from matching or pitch tracking.",
+        "polish": "Replay the highlighted moments and repeat only those phrases.",
     }
     return tips.get(issue, tips["polish"])
 
@@ -1283,9 +1319,12 @@ def _problem_moments_from_contours(
         end_s = float(window["reference_time_s"].max())
         if end_s <= start_s:
             end_s = start_s + max(_median_contour_step_s(reference), 0.20)
+        median_signed = float(np.nanmedian(window["signed_error_cents"]))
+        median_residual = float(np.nanmedian(window["residual_error_cents"]))
         median_abs = float(np.nanmedian(window["abs_residual_cents"]))
         max_abs = float(np.nanmax(window["abs_residual_cents"]))
         mean_abs_pitch = float(np.nanmean(window["abs_pitch_error_cents"]))
+        timing_error_ms = _score_float(timing_debug or {}, "median_abs_local_error_s", 0.0) * 1000.0
         likely_issue = _classify_problem_moment(
             median_abs_residual=median_abs,
             max_abs_residual=max_abs,
@@ -1299,12 +1338,28 @@ def _problem_moments_from_contours(
                 "end_s": round(end_s, 2),
                 "duration_s": round(end_s - start_s, 2),
                 "likely_issue": likely_issue,
+                "median_signed_error_cents": round(median_signed, 2),
+                "median_residual_error_cents": round(median_residual, 2),
                 "median_abs_residual_cents": round(median_abs, 2),
                 "max_abs_residual_cents": round(max_abs, 2),
                 "mean_abs_pitch_error_cents": round(mean_abs_pitch, 2),
+                "timing_error_ms": round(float(timing_error_ms), 0),
                 "frames": int(len(window)),
-                "practice_tip": _moment_practice_tip(likely_issue),
-                "evidence": _moment_evidence(likely_issue, median_abs, max_abs, mean_abs_pitch),
+                "practice_tip": _moment_practice_tip(
+                    likely_issue,
+                    median_signed_error=median_signed,
+                    median_abs_residual=median_abs,
+                    max_abs_residual=max_abs,
+                    timing_error_ms=timing_error_ms,
+                ),
+                "evidence": _moment_evidence(
+                    likely_issue,
+                    median_signed,
+                    median_abs,
+                    max_abs,
+                    mean_abs_pitch,
+                    timing_error_ms,
+                ),
             }
         )
 
@@ -1375,31 +1430,56 @@ def _classify_problem_moment(
     local_timing = _score_float(timing_debug or {}, "median_abs_local_error_s", 0.0)
     timing_spread = _score_float(timing_debug or {}, "raw_delta_s_mad_or_std", 0.0)
     if max_abs_residual >= 700.0:
-        return "possible_extraction_or_alignment_spike"
+        return "analysis_check"
     if timing_score < 70.0 or local_timing > 0.18 or timing_spread > 0.18:
-        return "likely_timing_or_alignment"
+        return "timing"
     if mean_abs_pitch_error >= 150.0:
-        return "likely_pitch_accuracy"
+        return "pitch_accuracy"
     if median_abs_residual >= 100.0:
-        return "likely_pitch_consistency"
-    return "minor_polish"
+        return "pitch_consistency"
+    return "polish"
 
 
-def _moment_practice_tip(issue: str) -> str:
-    tips = {
-        "possible_extraction_or_alignment_spike": "Listen first. If the clips do not match the same phrase, fix alignment/source quality before practicing this as a vocal issue.",
-        "likely_timing_or_alignment": "Clap or speak the rhythm, then sing the phrase while entering slightly earlier with the reference.",
-        "likely_pitch_accuracy": "Slow this phrase down and match the target note sequence before singing with full backing.",
-        "likely_pitch_consistency": "Hold the target notes more steadily; practice the phrase on one vowel before adding lyrics.",
-        "minor_polish": "Repeat this phrase and focus on keeping the pitch trace close through note transitions.",
-    }
-    return tips.get(issue, tips["minor_polish"])
+def _moment_practice_tip(
+    issue: str,
+    *,
+    median_signed_error: float,
+    median_abs_residual: float,
+    max_abs_residual: float,
+    timing_error_ms: float,
+) -> str:
+    direction = _pitch_direction(median_signed_error)
+    cents = _format_cents(median_signed_error)
+    if issue == "analysis_check":
+        return (
+            f"Listen to the A/B clip first. This moment has a {max_abs_residual:.0f}-cent spike, "
+            "which may come from matching or pitch tracking."
+        )
+    if issue == "timing":
+        return f"Your timing is off by about {timing_error_ms:.0f} ms here. Practice starting this phrase with the reference."
+    if issue == "pitch_accuracy":
+        if direction == "above":
+            return f"Your notes are about {cents} above the reference here. Practice singing this phrase lower by about {cents}."
+        if direction == "below":
+            return f"Your notes are about {cents} below the reference here. Practice singing this phrase higher by about {cents}."
+        return f"Your notes are about {cents} from the reference here. Practice this phrase again."
+    if issue == "pitch_consistency":
+        return f"Your pitch moves by about {_format_cents(median_abs_residual)} here. Practice keeping these notes steadier."
+    return f"The largest pitch difference here is about {_format_cents(max_abs_residual)}. Replay and retry this phrase."
 
 
-def _moment_evidence(issue: str, median_abs: float, max_abs: float, mean_abs_pitch: float) -> str:
+def _moment_evidence(
+    issue: str,
+    median_signed: float,
+    median_abs: float,
+    max_abs: float,
+    mean_abs_pitch: float,
+    timing_error_ms: float,
+) -> str:
     return (
-        f"{issue}; median residual {median_abs:.0f} cents, "
-        f"max residual {max_abs:.0f} cents, mean pitch error {mean_abs_pitch:.0f} cents"
+        f"{issue}; median pitch error {median_signed:.0f} cents, "
+        f"median residual {median_abs:.0f} cents, max residual {max_abs:.0f} cents, "
+        f"mean pitch error {mean_abs_pitch:.0f} cents, timing error {timing_error_ms:.0f} ms"
     )
 
 
@@ -1442,17 +1522,15 @@ def _coach_feedback_markdown(
     lines = [
         "### Coach feedback",
         "",
+        f"Main issue: **{explanation.get('primary_issue', 'unknown')}**",
         str(explanation.get("summary", "")),
-        "",
-        f"Practice focus: **{explanation.get('primary_issue', 'unknown')}**",
-        f"Next drill: {explanation.get('practice_tip', '')}",
     ]
     if moments:
-        lines.extend(["", "Problem moments to replay:"])
+        lines.extend(["", "Practice these moments:"])
         for moment in moments:
             lines.append(
                 f"- #{moment['rank']} {moment['start_s']:.2f}s-{moment['end_s']:.2f}s: "
-                f"{moment['likely_issue']} | {moment['practice_tip']}"
+                f"{moment['practice_tip']}"
             )
     else:
         lines.extend(["", "No strong problem moments were found from the current residual trace."])
@@ -5027,7 +5105,7 @@ playback checkpoints for local research testing.
                             value="htdemucs",
                             label="Demucs model",
                         )
-                        device = gr.Dropdown(["cpu", "mps", "cuda"], value="cpu", label="Device")
+                        device = gr.Dropdown(["cpu", "mps", "cuda"], value=DEFAULT_DEMUCS_DEVICE, label="Device")
                         shifts = gr.Slider(1, 4, value=1, step=1, label="Shifts")
                         overlap = gr.Slider(0.10, 0.50, value=0.25, step=0.05, label="Overlap")
                     prepare_button = gr.Button("Prepare Analysis Audio", variant="primary")
@@ -5838,7 +5916,7 @@ Compare original audio against prepared analysis audio. This tab reuses the same
                                 value="htdemucs",
                                 label="Demucs model",
                             )
-                            lab_device = gr.Dropdown(["cpu", "mps", "cuda"], value="cpu", label="Device")
+                            lab_device = gr.Dropdown(["cpu", "mps", "cuda"], value=DEFAULT_DEMUCS_DEVICE, label="Device")
                             lab_shifts = gr.Slider(1, 4, value=1, step=1, label="Shifts")
                             lab_overlap = gr.Slider(0.10, 0.50, value=0.25, step=0.05, label="Overlap")
                         lab_prepare_button = gr.Button("Run Audio Preparation Lab", variant="primary")
