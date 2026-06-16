@@ -309,6 +309,21 @@
                   </div>
                   <ol class="processing-steps" id="processingStepList"></ol>
                 </div>
+
+                <div class="processing-survey" id="processingSurvey" aria-labelledby="surveyTitle">
+                  <div class="processing-survey__top">
+                    <div>
+                      <span class="timeline-eyebrow">빠른 설문</span>
+                      <strong class="processing-survey__title" id="surveyTitle">분석하는 동안 4개만 답해주세요</strong>
+                    </div>
+                    <span class="processing-survey__progress" id="surveyProgress">1/4</span>
+                  </div>
+                  <p class="processing-survey__hint" id="surveyHint">답변이 끝나고 분석이 완료되면 결과가 바로 열립니다.</p>
+                  <div class="processing-survey__card" id="surveyCard" aria-live="polite"></div>
+                  <div class="processing-survey__dots" id="surveyDots" aria-hidden="true"></div>
+                </div>
+
+                <p class="result-gate is-hidden" id="resultGate" role="status" aria-live="polite"></p>
               </div>
 
               <!-- State C: Analysis Result View -->

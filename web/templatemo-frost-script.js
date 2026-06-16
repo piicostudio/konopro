@@ -45,6 +45,45 @@
     }
   ];
 
+  var workflowQuestions = [
+    {
+      name: "karaokeUse",
+      title: "코노에서 어떻게 쓸 것 같나요?",
+      options: [
+        { value: "full_session", label: "한 세션 전체 녹음 (30분~1시간)" },
+        { value: "single_song", label: "한 곡씩 녹음 (3-4분)" },
+        { value: "upload_later", label: "먼저 녹음을 하고 나중에 분석 하기 위해 올릴 것" }
+      ]
+    },
+    {
+      name: "deviceContext",
+      title: "지금 어떤 기기로 보고 있나요?",
+      options: [
+        { value: "phone", label: "휴대폰" },
+        { value: "laptop", label: "노트북" },
+        { value: "tablet", label: "태블릿" }
+      ]
+    },
+    {
+      name: "appInstall",
+      title: "업로드 없이 앱에서 바로 녹음된다면 설치할 것 같나요?",
+      options: [
+        { value: "yes", label: "네" },
+        { value: "no", label: "아니요" },
+        { value: "not_sure", label: "아직 모르겠어요" }
+      ]
+    },
+    {
+      name: "resultPriority",
+      title: "결과에서 가장 먼저 보고 싶은 건?",
+      options: [
+        { value: "practice_gaps", label: "연습을 더 해야 할 부분" },
+        { value: "progress", label: "늘었는지 여부" },
+        { value: "similarity", label: "원곡과 얼마나 비슷하게 하고 있는지" }
+      ]
+    }
+  ];
+
   var flowState = createInitialFlowState();
 
   document.addEventListener("DOMContentLoaded", function () {
@@ -102,6 +141,12 @@
       processingStepTitle: document.getElementById("processingStepTitle"),
       processingStepText: document.getElementById("processingStepText"),
       processingStepList: document.getElementById("processingStepList"),
+      processingSurvey: document.getElementById("processingSurvey"),
+      surveyProgress: document.getElementById("surveyProgress"),
+      surveyHint: document.getElementById("surveyHint"),
+      surveyCard: document.getElementById("surveyCard"),
+      surveyDots: document.getElementById("surveyDots"),
+      resultGate: document.getElementById("resultGate"),
       
       result: document.getElementById("result"),
       resultLayout: document.getElementById("resultLayout"),
@@ -130,7 +175,9 @@
       scoringRun: null,
       analysisReady: false,
       analysisFailed: false,
-      questionsComplete: true, // Auto bypass survey
+      questionsComplete: false,
+      questionAnswers: {},
+      activeQuestionIndex: 0,
       processingMode: "idle",
       resultRendered: false
     };
@@ -498,7 +545,9 @@
       fileSize: elements.takeFileSize
     });
 
+    initProcessingSurvey();
     renderProcessingStages();
+    resetProcessingSurvey();
     setProcessingStage(0, "idle");
     transitionRightColumn("empty");
   }
@@ -532,6 +581,7 @@
     flowState.scoringRun = null;
     flowState.resultRendered = false;
     flowState.processingMode = "starting";
+    resetProcessingSurvey();
 
     // Start UI processing stage
     transitionRightColumn("processing");
@@ -566,6 +616,7 @@
         elements.processingHint.textContent = "분석 시작 실패. 백엔드 서버 및 파일 형식을 확인하세요.";
         failProcessingNarrative("분석 시작 실패. 백엔드 서버 및 파일 형식을 확인하세요.");
         flowState.analysisFailed = true;
+        setResultGate("", false);
         trackEvent("action_analysis_failed", "site_MVP", {
           stage: "start",
           message: error.message
@@ -598,10 +649,7 @@
               overall_score: payload.scoring_run.scores && payload.scoring_run.scores.overall_score
             });
 
-            // Unlock and render results immediately
-            flowState.resultRendered = true;
-            transitionRightColumn("result");
-            renderResult(payload.scoring_run);
+            tryRevealResult();
             return;
           }
           
@@ -612,6 +660,7 @@
             setJobStatus(errMsg, "error");
             failProcessingNarrative(errMsg);
             flowState.analysisFailed = true;
+            setResultGate("", false);
             trackEvent("action_analysis_failed", "site_MVP", {
               stage: "poll",
               job_id: payload.job.id,
@@ -628,6 +677,7 @@
           setJobStatus(error.message, "error");
           failProcessingNarrative("결과 폴링 연결 실패. 백엔드가 실행 중인지 확인하세요.");
           flowState.analysisFailed = true;
+          setResultGate("", false);
         });
     }, 2000);
   }
@@ -667,6 +717,184 @@
     }
 
     setJobStatus(statusText(payload), "working");
+  }
+
+  function initProcessingSurvey() {
+    if (!elements.processingSurvey) return;
+
+    elements.processingSurvey.addEventListener("change", function (event) {
+      var input = event.target.closest("[data-survey-answer]");
+      if (!input || !input.checked) return;
+
+      answerProcessingSurveyQuestion(input.name, input.value);
+    });
+  }
+
+  function resetProcessingSurvey() {
+    flowState.questionAnswers = {};
+    flowState.questionsComplete = false;
+    flowState.activeQuestionIndex = 0;
+    renderProcessingSurvey();
+    setSurveyFocusMode(false);
+    setResultGate("", false);
+  }
+
+  function renderProcessingSurvey() {
+    if (!elements.surveyCard || !elements.surveyProgress || !elements.surveyDots) return;
+
+    var total = workflowQuestions.length;
+    var answeredCount = Object.keys(flowState.questionAnswers || {}).length;
+    var displayIndex = Math.min(flowState.activeQuestionIndex + 1, total);
+
+    if (flowState.questionsComplete) {
+      elements.surveyProgress.textContent = total + "/" + total;
+      elements.surveyHint.textContent = flowState.analysisReady
+        ? "분석이 완료되었습니다. 이제 결과를 열고 있어요."
+        : "설문 완료. 분석이 끝나면 결과가 바로 열립니다.";
+      elements.surveyCard.innerHTML = (
+        '<div class="processing-survey__complete">' +
+          '<strong>답변 완료</strong>' +
+          '<span>분석이 끝나는 즉시 결과를 보여드릴게요.</span>' +
+        '</div>'
+      );
+      renderSurveyDots(total, total);
+      animateSurveyCard();
+      return;
+    }
+
+    var question = workflowQuestions[flowState.activeQuestionIndex];
+    elements.surveyProgress.textContent = displayIndex + "/" + total;
+    elements.surveyHint.textContent = flowState.analysisReady
+      ? "분석이 완료되었습니다. 설문을 마치면 바로 결과를 볼 수 있어요."
+      : "답변이 끝나고 분석이 완료되면 결과가 바로 열립니다.";
+
+    elements.surveyCard.innerHTML = (
+      '<fieldset class="processing-survey__fieldset">' +
+        '<legend class="processing-survey__question">' + escapeHtml(question.title) + '</legend>' +
+        '<div class="processing-survey__options">' +
+          question.options.map(function (option) {
+            return (
+              '<label class="processing-survey__option">' +
+                '<input type="radio" name="' + escapeHtml(question.name) + '" value="' + escapeHtml(option.value) + '" data-survey-answer>' +
+                '<span>' + escapeHtml(option.label) + '</span>' +
+              '</label>'
+            );
+          }).join("") +
+        '</div>' +
+      '</fieldset>'
+    );
+    renderSurveyDots(answeredCount, total);
+    animateSurveyCard();
+  }
+
+  function renderSurveyDots(answeredCount, total) {
+    if (!elements.surveyDots) return;
+
+    elements.surveyDots.innerHTML = workflowQuestions.map(function (_, index) {
+      var activeClass = index < answeredCount ? " is-done" : "";
+      if (!flowState.questionsComplete && index === flowState.activeQuestionIndex) {
+        activeClass += " is-active";
+      }
+      return '<span class="processing-survey__dot' + activeClass + '"></span>';
+    }).join("");
+  }
+
+  function animateSurveyCard() {
+    if (!elements.surveyCard) return;
+
+    elements.surveyCard.classList.remove("is-entering");
+    void elements.surveyCard.offsetWidth;
+    elements.surveyCard.classList.add("is-entering");
+  }
+
+  function answerProcessingSurveyQuestion(questionName, value) {
+    var question = workflowQuestions[flowState.activeQuestionIndex];
+    if (!question || question.name !== questionName || flowState.questionsComplete) return;
+
+    var option = question.options.find(function (item) {
+      return item.value === value;
+    });
+
+    flowState.questionAnswers[questionName] = value;
+    trackEvent("click_surveyquestion_" + questionName, "site_MVP", {
+      question_index: flowState.activeQuestionIndex + 1,
+      question: question.title,
+      answer: value,
+      answer_label: option ? option.label : value
+    });
+
+    elements.surveyCard.querySelectorAll("input").forEach(function (input) {
+      input.disabled = true;
+    });
+
+    window.setTimeout(function () {
+      if (flowState.activeQuestionIndex >= workflowQuestions.length - 1) {
+        flowState.questionsComplete = true;
+      } else {
+        flowState.activeQuestionIndex += 1;
+      }
+
+      renderProcessingSurvey();
+      tryRevealResult();
+    }, 160);
+  }
+
+  function tryRevealResult() {
+    if (flowState.analysisFailed) {
+      setSurveyFocusMode(false);
+      setResultGate("", false);
+      return;
+    }
+
+    if (flowState.analysisReady && flowState.scoringRun && flowState.questionsComplete) {
+      if (flowState.resultRendered) return;
+
+      flowState.resultRendered = true;
+      setSurveyFocusMode(false);
+      setResultGate("", false);
+      renderResult(flowState.scoringRun);
+      transitionRightColumn("result");
+      trackEvent("action_result_unlocked", "site_MVP", {
+        answered_questions: Object.keys(flowState.questionAnswers || {}).length,
+        overall_score: flowState.scoringRun.scores && flowState.scoringRun.scores.overall_score
+      });
+      return;
+    }
+
+    if (flowState.analysisReady && !flowState.questionsComplete) {
+      elements.processingHint.textContent = "분석은 완료되었습니다. 아래 설문을 마치면 결과가 바로 열립니다.";
+      setSurveyFocusMode(true);
+      setResultGate("분석이 완료되었습니다. 설문을 마치면 바로 결과를 볼 수 있어요.", true);
+      renderProcessingSurvey();
+      return;
+    }
+
+    if (!flowState.analysisReady && flowState.questionsComplete) {
+      setSurveyFocusMode(false);
+      setResultGate("설문 완료. 분석이 끝나면 결과가 바로 열립니다.", true);
+      renderProcessingSurvey();
+      return;
+    }
+
+    setSurveyFocusMode(false);
+    setResultGate("", false);
+  }
+
+  function setSurveyFocusMode(isFocused) {
+    if (!elements.processingStage) return;
+
+    elements.processingStage.classList.toggle("is-waiting-survey", isFocused);
+    var workspaceCard = elements.processingStage.closest(".result-workspace-card");
+    if (workspaceCard) {
+      workspaceCard.classList.toggle("is-survey-focus", isFocused);
+    }
+  }
+
+  function setResultGate(message, isVisible) {
+    if (!elements.resultGate) return;
+
+    elements.resultGate.textContent = message || "";
+    elements.resultGate.classList.toggle("is-hidden", !isVisible);
   }
 
   function renderResult(scoringRun) {
@@ -1174,6 +1402,7 @@
 
   function failProcessingNarrative(message) {
     clearProcessingStageTimer();
+    setSurveyFocusMode(false);
     flowState.processingMode = "failed";
     setProcessingStage(processingStageIndex, "failed");
     elements.processingStepTitle.textContent = "분석이 중단되었습니다.";
@@ -1235,6 +1464,7 @@
     flowState = createInitialFlowState();
     activeSessionId = null;
     resetResult();
+    resetProcessingSurvey();
     setProcessingStage(0, "idle");
     setJobStatus("대기 중", "idle");
     transitionRightColumn("empty");
@@ -1267,6 +1497,7 @@
     elements.resultYoutubeEmbed.removeAttribute("src");
     elements.resultYoutubeLink.href = "#";
     elements.resultYoutubeLink.textContent = "Open YouTube";
+    setResultGate("", false);
   }
 
   function persistSettings() {
