@@ -23,6 +23,7 @@ dev = [
 ]
 stems = [
   "demucs>=4.0.1",
+  "torchcodec>=0.14.0",
 ]
 
 [build-system]

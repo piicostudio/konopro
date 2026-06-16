@@ -9,6 +9,7 @@ dependencies = [
   "pydantic-settings>=2.6",
   "python-multipart>=0.0.12",
   "sqlmodel>=0.0.22",
+  "torchcodec>=0.14.0",
   "uvicorn[standard]>=0.30",
   "yt-dlp>=2024.8.6",
 ]

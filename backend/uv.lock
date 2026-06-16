@@ -820,6 +820,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-multipart" },
     { name = "sqlmodel" },
+    { name = "torchcodec" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "yt-dlp" },
 ]
@@ -847,6 +848,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.12" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "sqlmodel", specifier = ">=0.0.22" },
+    { name = "torchcodec", specifier = ">=0.14.0" },
     { name = "torchcodec", marker = "extra == 'stems'", specifier = ">=0.14.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
     { name = "yt-dlp", specifier = ">=2024.8.6" },
@@ -873,6 +875,7 @@ dependencies = [
 [package.optional-dependencies]
 stems = [
     { name = "demucs" },
+    { name = "torchcodec" },
 ]
 
 [package.metadata]
@@ -889,6 +892,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "soundfile", specifier = ">=0.12" },
     { name = "streamlit", specifier = ">=1.35" },
+    { name = "torchcodec", marker = "extra == 'stems'", specifier = ">=0.14.0" },
 ]
 provides-extras = ["dev", "stems"]
 

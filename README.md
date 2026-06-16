@@ -11,7 +11,7 @@ Konopro는 유튜브 원곡과 내 노래 녹음 파일을 비교해 보컬 점�
 Homebrew가 설치되어 있다면:
 
 ```bash
-brew install uv ffmpeg yt-dlp
+brew install uv ffmpeg
 ```
 
 ### Windows
@@ -21,7 +21,6 @@ PowerShell에서:
 ```powershell
 winget install astral-sh.uv
 winget install Gyan.FFmpeg
-winget install yt-dlp.yt-dlp
 ```
 
 설치 후 새 터미널을 열고 확인합니다:
@@ -29,7 +28,6 @@ winget install yt-dlp.yt-dlp
 ```bash
 uv --version
 ffmpeg -version
-yt-dlp --version
 ```
 
 ## 2. 백엔드 설치
@@ -40,6 +38,14 @@ uv sync --extra dev --extra stems
 ```
 
 `stems` 옵션은 Demucs 보컬 분리용 의존성을 설치합니다. 점수 품질에 중요하므로 항상 포함해서 설치합니다.
+이 옵션에는 Demucs와 TorchCodec이 포함됩니다. `yt-dlp`도 백엔드 Python 의존성으로 설치되므로 별도 시스템 설치가 필요 없습니다.
+
+확인:
+
+```bash
+uv run python -m yt_dlp --version
+uv run python -c "import torchcodec; print('torchcodec ok')"
+```
 
 ## 3. 백엔드 API 실행
 
