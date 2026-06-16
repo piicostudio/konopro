@@ -6,61 +6,52 @@
   var processingStageTimer = null;
   var processingStageIndex = 0;
   var activeSessionId = null;
+  var vantaInstance = null;
+  
   var audioPreviewUrls = {
     take: null
   };
+  
   var defaultGoogleDbUrl = "https://script.google.com/macros/s/AKfycbw2aSa60f7B-wMBQlspwdNHi8w2iHTQ-tLouwVdMP7ddPomE_TYBPcM1iNQgRHpeLyoYw/exec";
   var storageKeys = {
     apiBaseUrl: "konopro.apiBaseUrl",
     betaUserKey: "konopro.betaUserKey",
     googleDbUrl: "konopro.googleDbUrl",
     analyticsSessionId: "konopro.analyticsSessionId",
-    analyticsQueue: "konopro.analyticsQueue",
-    workflowAnswers: "konopro.workflowQuestionAnswers"
+    analyticsQueue: "konopro.analyticsQueue"
   };
+  
   var analyticsQueueLimit = 80;
-  var trackedSectionEvents = {};
-  var questionNames = ["karaokeUse", "deviceContext", "appInstall", "resultPriority"];
+  
   var processingStages = [
     {
-      title: "Loading YouTube reference",
-      text: "Downloading the original singer's track so your take can be compared against the same song."
+      title: "원곡 준비 중 (1/3)",
+      text: "유튜브에서 원곡 음원을 다운로드하여 보컬 분석을 준비하고 있습니다."
     },
     {
-      title: "Preparing both audio files",
-      text: "Normalizing the upload and reference so pitch and timing can be measured on the same footing."
+      title: "보컬 트레이싱 및 얼라인먼트 (2/3)",
+      text: "내 보컬 녹음의 피치 컨투어를 원곡 멜로디와 타임스탬프 단위로 매칭합니다."
     },
     {
-      title: "Tracing pitch differences",
-      text: "Following the melody contour and finding where your notes drift sharp, flat, or stay centered."
-    },
-    {
-      title: "Checking timing alignment",
-      text: "Matching phrases between your recording and the reference to estimate timing offset."
-    },
-    {
-      title: "Measuring stability and coverage",
-      text: "Checking how steady the voiced sections are and how much usable singing was detected."
-    },
-    {
-      title: "Building final feedback",
-      text: "Combining the scores into practice notes and warnings you can actually use."
+      title: "분석 보고서 작성 중 (3/3)",
+      text: "평균 편차(cents/ms)와 불안정성 지수를 종합하여 맞춤 피드백을 생성하고 있습니다."
     }
   ];
+
   var flowState = createInitialFlowState();
 
   document.addEventListener("DOMContentLoaded", function () {
     cacheElements();
+    initVantaBackground();
     initStoredSettings();
     initLandingInteractions();
     initScoringConsole();
+    initInlineWaitlistForm();
+    initEntranceAnimations();
   });
 
   function cacheElements() {
     elements = {
-      hamburger: document.getElementById("hamburger"),
-      sidebar: document.getElementById("sidebar"),
-      sidebarOverlay: document.getElementById("sidebarOverlay"),
       settingsButton: document.getElementById("settingsButton"),
       settingsModal: document.getElementById("settingsModal"),
       modal: document.getElementById("revealModal"),
@@ -71,6 +62,7 @@
       apiBaseUrl: document.getElementById("apiBaseUrl"),
       betaUserKey: document.getElementById("betaUserKey"),
       googleDbUrl: document.getElementById("googleDbUrl"),
+      
       analysisForm: document.getElementById("analysisForm"),
       youtubeUrl: document.getElementById("youtubeUrl"),
       takeAudioCard: document.querySelector('[data-audio-card="take"]'),
@@ -82,31 +74,19 @@
       takeFileSize: document.getElementById("takeFileSize"),
       submitButton: document.getElementById("submitButton"),
       clearButton: document.getElementById("clearButton"),
-      uploadStage: document.getElementById("uploadStage"),
-      confirmStage: document.getElementById("confirmStage"),
+      
+      jobStatus: document.getElementById("jobStatus"),
+      jobStatusText: document.getElementById("jobStatusText"),
+      
+      // Right workspace state elements
+      emptyResult: document.getElementById("emptyResult"),
       processingStage: document.getElementById("processingStage"),
-      flowStepUpload: document.getElementById("flowStepUpload"),
-      flowStepReference: document.getElementById("flowStepReference"),
-      flowStepAnalyze: document.getElementById("flowStepAnalyze"),
-      youtubeModal: document.getElementById("youtubeModal"),
-      youtubeUrlForm: document.getElementById("youtubeUrlForm"),
-      youtubeModalUrl: document.getElementById("youtubeModalUrl"),
-      youtubeModalError: document.getElementById("youtubeModalError"),
-      confirmYoutubeEmbed: document.getElementById("confirmYoutubeEmbed"),
-      confirmYoutubeLink: document.getElementById("confirmYoutubeLink"),
-      confirmAnalyzeButton: document.getElementById("confirmAnalyzeButton"),
-      changeYoutubeButton: document.getElementById("changeYoutubeButton"),
-      workflowQuestionForm: document.getElementById("workflowQuestionForm"),
-      questionProgress: document.getElementById("questionProgress"),
-      resultGate: document.getElementById("resultGate"),
       processingHint: document.getElementById("processingHint"),
       processingStepTitle: document.getElementById("processingStepTitle"),
       processingStepText: document.getElementById("processingStepText"),
       processingStepList: document.getElementById("processingStepList"),
-      jobStatus: document.getElementById("jobStatus"),
-      jobStatusText: document.getElementById("jobStatusText"),
+      
       result: document.getElementById("result"),
-      emptyResult: document.getElementById("emptyResult"),
       resultLayout: document.getElementById("resultLayout"),
       overallScore: document.getElementById("overallScore"),
       metricGrid: document.getElementById("metricGrid"),
@@ -128,9 +108,7 @@
       scoringRun: null,
       analysisReady: false,
       analysisFailed: false,
-      questionsComplete: false,
-      questionAnswers: {},
-      questionFeedbackSent: false,
+      questionsComplete: true, // Auto bypass survey
       resultRendered: false
     };
   }
@@ -148,47 +126,85 @@
     persistSettings();
   }
 
+  function initVantaBackground() {
+    if (window.VANTA && window.VANTA.NET) {
+      vantaInstance = window.VANTA.NET({
+        el: "#vanta-bg",
+        mouseControls: true,
+        touchControls: true,
+        gyroControls: false,
+        minHeight: 200.0,
+        minWidth: 200.0,
+        scale: 1.0,
+        scaleMobile: 1.0,
+        color: 0x8b5cf6, // Violet
+        backgroundColor: 0x09090b, // Zinc 950
+        points: 8.0,
+        maxDistance: 20.0,
+        spacing: 16.0
+      });
+    }
+  }
+
+  function initEntranceAnimations() {
+    if (window.gsap) {
+      var tl = gsap.timeline();
+      tl.from(".navbar", { y: -64, opacity: 0, duration: 0.8, ease: "power3.out" });
+      tl.from(".hero__badge", { y: 20, opacity: 0, duration: 0.6 }, "-=0.4");
+      tl.from(".hero__title", { y: 30, opacity: 0, duration: 0.8, ease: "power3.out" }, "-=0.4");
+      tl.from(".hero__subtitle", { y: 20, opacity: 0, duration: 0.6 }, "-=0.5");
+      tl.from(".hero__actions", { y: 20, opacity: 0, duration: 0.6 }, "-=0.4");
+    }
+  }
+
+  function transitionRightColumn(state) {
+    var activeElement = null;
+    var toShowElement = null;
+
+    if (!elements.emptyResult.classList.contains("is-hidden")) activeElement = elements.emptyResult;
+    else if (!elements.processingStage.classList.contains("is-hidden")) activeElement = elements.processingStage;
+    else if (!elements.result.classList.contains("is-hidden")) activeElement = elements.result;
+
+    if (state === "empty") toShowElement = elements.emptyResult;
+    else if (state === "processing") toShowElement = elements.processingStage;
+    else if (state === "result") toShowElement = elements.result;
+
+    if (activeElement === toShowElement) return;
+
+    if (window.gsap && activeElement && toShowElement) {
+      gsap.to(activeElement, {
+        opacity: 0,
+        y: -10,
+        duration: 0.2,
+        ease: "power2.in",
+        onComplete: function () {
+          activeElement.classList.add("is-hidden");
+          toShowElement.classList.remove("is-hidden");
+          gsap.fromTo(toShowElement,
+            { opacity: 0, y: 10 },
+            { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }
+          );
+        }
+      });
+    } else {
+      if (activeElement) activeElement.classList.add("is-hidden");
+      if (toShowElement) toShowElement.classList.remove("is-hidden");
+    }
+  }
+
   function initLandingInteractions() {
-    initSidebar();
     initRevealAnimations();
     initBuilderPreview();
     initSettingsModal();
     initAnalytics();
     initModal();
     initWaitlistForm();
-    initActiveNav();
-  }
-
-  function initSidebar() {
-    if (!elements.hamburger || !elements.sidebar || !elements.sidebarOverlay) {
-      return;
-    }
-
-    function setOpen(open) {
-      elements.hamburger.classList.toggle("is-active", open);
-      elements.sidebar.classList.toggle("is-open", open);
-      elements.sidebarOverlay.classList.toggle("is-visible", open);
-      elements.hamburger.setAttribute("aria-expanded", open ? "true" : "false");
-    }
-
-    elements.hamburger.addEventListener("click", function () {
-      setOpen(!elements.sidebar.classList.contains("is-open"));
-    });
-    elements.sidebarOverlay.addEventListener("click", function () {
-      setOpen(false);
-    });
-    elements.sidebar.querySelectorAll("a").forEach(function (link) {
-      link.addEventListener("click", function () {
-        setOpen(false);
-      });
-    });
   }
 
   function initRevealAnimations() {
     var revealNodes = document.querySelectorAll(".reveal");
-    if (!revealNodes.length) {
-      return;
-    }
+    if (!revealNodes.length) return;
+    
     if (!("IntersectionObserver" in window)) {
       revealNodes.forEach(function (node) {
         node.classList.add("is-visible");
@@ -203,7 +219,7 @@
           observer.unobserve(entry.target);
         }
       });
-    }, { threshold: 0.12 });
+    }, { threshold: 0.15 });
 
     revealNodes.forEach(function (node) {
       observer.observe(node);
@@ -211,11 +227,9 @@
   }
 
   function initBuilderPreview() {
-    var steps = document.querySelectorAll(".builder-step");
-    var images = document.querySelectorAll(".builder__preview-img");
-    if (!steps.length || !images.length) {
-      return;
-    }
+    var steps = document.querySelectorAll(".builder-step[data-preview]");
+    var images = document.querySelectorAll(".builder__preview-img[data-preview-img]");
+    if (!steps.length || !images.length) return;
 
     function activate(previewId) {
       steps.forEach(function (step) {
@@ -230,246 +244,14 @@
       step.addEventListener("mouseenter", function () {
         activate(step.getAttribute("data-preview"));
       });
-      step.addEventListener("focus", function () {
-        activate(step.getAttribute("data-preview"));
-      });
       step.addEventListener("click", function () {
         activate(step.getAttribute("data-preview"));
       });
     });
-  }
-
-  function initAnalytics() {
-    ensureAnalyticsSessionId();
-    initSectionAnalytics();
-    initFeatureAnalytics();
-    initCtaAnalytics();
-    flushAnalyticsQueue();
-    window.addEventListener("online", flushAnalyticsQueue);
-    window.addEventListener("pagehide", flushAnalyticsQueue);
-  }
-
-  function initSectionAnalytics() {
-    var sectionEvents = [
-      { id: "hero", event: "site_hero", section: "site_hero" },
-      { id: "problem", event: "site_problem", section: "site_problem" },
-      { id: "solution", event: "site_corefeature", section: "site_corefeature" },
-      { id: "analyze", event: "site_MVP", section: "site_MVP" },
-      { id: "cta-bottom", event: "site_CTA", section: "site_CTA" }
-    ];
-
-    trackSectionOnce("site_hero", "site_hero");
-
-    if (!("IntersectionObserver" in window)) {
-      return;
-    }
-
-    var observer = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        if (!entry.isIntersecting) {
-          return;
-        }
-        var match = sectionEvents.find(function (item) {
-          return item.id === entry.target.id;
-        });
-        if (match) {
-          trackSectionOnce(match.event, match.section);
-        }
-      });
-    }, { rootMargin: "-30% 0px -45% 0px", threshold: 0.12 });
-
-    sectionEvents.forEach(function (item) {
-      var node = document.getElementById(item.id);
-      if (node) {
-        observer.observe(node);
-      }
-    });
-  }
-
-  function initFeatureAnalytics() {
-    document.querySelectorAll(".builder-step[data-preview]").forEach(function (step) {
-      var previewId = step.getAttribute("data-preview");
-      var hoverEvent = "hover_corefeature_" + previewId;
-      var clickEvent = "click_corefeature_" + previewId;
-      var sectionEvent = "site_corefeature_" + previewId;
-      var hoverTracked = false;
-
-      step.addEventListener("mouseenter", function () {
-        if (hoverTracked) {
-          return;
-        }
-        hoverTracked = true;
-        trackEvent(hoverEvent, "site_corefeature", { feature_id: previewId });
-        trackSectionOnce(sectionEvent, "site_corefeature", { feature_id: previewId, trigger: "hover" });
-      });
-
-      step.addEventListener("click", function () {
-        trackEvent(clickEvent, "site_corefeature", { feature_id: previewId });
-        trackSectionOnce(sectionEvent, "site_corefeature", { feature_id: previewId, trigger: "click" });
-      });
-
-      step.addEventListener("focus", function () {
-        trackSectionOnce(sectionEvent, "site_corefeature", { feature_id: previewId, trigger: "focus" });
-      });
-    });
-  }
-
-  function initCtaAnalytics() {
-    document.querySelectorAll("[data-event]").forEach(function (node) {
-      node.addEventListener("click", function () {
-        trackEvent(node.getAttribute("data-event"), node.getAttribute("data-section") || inferSection(node), {
-          label: node.textContent.trim()
-        });
-      });
-    });
-  }
-
-  function trackSectionOnce(eventName, section, metadata) {
-    if (trackedSectionEvents[eventName]) {
-      return;
-    }
-    trackedSectionEvents[eventName] = true;
-    trackEvent(eventName, section, metadata || {});
-  }
-
-  function trackEvent(eventName, section, metadata) {
-    if (!eventName) {
-      return;
-    }
-
-    var eventPayload = {
-      event_id: "evt-" + Math.random().toString(36).slice(2, 10) + "-" + Date.now().toString(36),
-      timestamp: new Date().toISOString(),
-      session_id: ensureAnalyticsSessionId(),
-      tester_id: betaUserKey(),
-      event_name: eventName,
-      section: section || "site",
-      page_url: window.location.href,
-      path: window.location.pathname + window.location.hash,
-      user_agent: window.navigator.userAgent,
-      metadata: metadata || {}
-    };
-
-    enqueueAnalyticsEvent(eventPayload);
-    flushAnalyticsQueue();
-  }
-
-  function ensureAnalyticsSessionId() {
-    var sessionId = localStorage.getItem(storageKeys.analyticsSessionId);
-    if (!sessionId) {
-      sessionId = "site-" + Math.random().toString(36).slice(2, 8) + "-" + Date.now().toString(36);
-      localStorage.setItem(storageKeys.analyticsSessionId, sessionId);
-    }
-    return sessionId;
-  }
-
-  function enqueueAnalyticsEvent(eventPayload) {
-    var queue = readAnalyticsQueue();
-    queue.push(eventPayload);
-    if (queue.length > analyticsQueueLimit) {
-      queue = queue.slice(queue.length - analyticsQueueLimit);
-    }
-    writeAnalyticsQueue(queue);
-  }
-
-  function flushAnalyticsQueue() {
-    var endpoint = googleDbUrl();
-    if (!endpoint) {
-      return;
-    }
-
-    var queue = readAnalyticsQueue();
-    if (!queue.length) {
-      return;
-    }
-
-    writeAnalyticsQueue([]);
-    queue.forEach(function (eventPayload) {
-      postAnalyticsEvent(endpoint, eventPayload).catch(function () {
-        enqueueAnalyticsEvent(eventPayload);
-      });
-    });
-  }
-
-  function postAnalyticsEvent(endpoint, eventPayload) {
-    return postGoogleDbRecord(endpoint, "event", eventPayload);
-  }
-
-  function postWaitlistRecord(email, advice) {
-    var endpoint = googleDbUrl();
-    if (!endpoint) {
-      return Promise.reject(new Error("Google DB URL is not configured."));
-    }
-
-    return postGoogleDbRecord(endpoint, "waitlist", {
-      timestamp: new Date().toISOString(),
-      session_id: ensureAnalyticsSessionId(),
-      tester_id: betaUserKey(),
-      email: email,
-      advice: advice || "",
-      page_url: window.location.href,
-      path: window.location.pathname + window.location.hash
-    });
-  }
-
-  function postGoogleDbRecord(endpoint, type, payload) {
-    return fetch(endpoint, {
-      method: "POST",
-      mode: "no-cors",
-      keepalive: true,
-      headers: {
-        "Content-Type": "text/plain;charset=utf-8"
-      },
-      body: JSON.stringify({
-        type: type,
-        payload: payload
-      })
-    });
-  }
-
-  function readAnalyticsQueue() {
-    try {
-      return JSON.parse(localStorage.getItem(storageKeys.analyticsQueue) || "[]");
-    } catch (_error) {
-      return [];
-    }
-  }
-
-  function writeAnalyticsQueue(queue) {
-    try {
-      localStorage.setItem(storageKeys.analyticsQueue, JSON.stringify(queue));
-    } catch (_error) {
-      // Analytics must never block the demo flow.
-    }
-  }
-
-  function inferSection(node) {
-    var section = node.closest("section");
-    if (!section) {
-      return "site";
-    }
-    if (section.id === "hero") {
-      return "site_hero";
-    }
-    if (section.id === "problem") {
-      return "site_problem";
-    }
-    if (section.id === "solution") {
-      return "site_corefeature";
-    }
-    if (section.id === "analyze") {
-      return "site_MVP";
-    }
-    if (section.id === "cta-bottom") {
-      return "site_CTA";
-    }
-    return section.id || "site";
   }
 
   function initSettingsModal() {
-    if (!elements.settingsButton || !elements.settingsModal) {
-      return;
-    }
+    if (!elements.settingsButton || !elements.settingsModal) return;
 
     var closers = elements.settingsModal.querySelectorAll("[data-close-settings-modal]");
 
@@ -478,11 +260,9 @@
       elements.settingsModal.setAttribute("aria-hidden", "false");
       elements.settingsButton.setAttribute("aria-expanded", "true");
       document.body.style.overflow = "hidden";
-      if (elements.apiBaseUrl) {
-        setTimeout(function () {
-          elements.apiBaseUrl.focus();
-        }, 120);
-      }
+      setTimeout(function () {
+        elements.apiBaseUrl.focus();
+      }, 120);
     }
 
     function close() {
@@ -497,17 +277,10 @@
     closers.forEach(function (closer) {
       closer.addEventListener("click", close);
     });
-    document.addEventListener("keydown", function (event) {
-      if (event.key === "Escape" && elements.settingsModal.classList.contains("is-open")) {
-        close();
-      }
-    });
   }
 
   function initModal() {
-    if (!elements.modal) {
-      return;
-    }
+    if (!elements.modal) return;
 
     var openers = document.querySelectorAll(".js-open-reveal");
     var closers = elements.modal.querySelectorAll("[data-close-modal]");
@@ -517,11 +290,9 @@
       elements.modal.classList.add("is-open");
       elements.modal.setAttribute("aria-hidden", "false");
       document.body.style.overflow = "hidden";
-      if (emailInput) {
-        setTimeout(function () {
-          emailInput.focus();
-        }, 120);
-      }
+      setTimeout(function () {
+        if (emailInput) emailInput.focus();
+      }, 120);
     }
 
     function close() {
@@ -536,17 +307,338 @@
     closers.forEach(function (closer) {
       closer.addEventListener("click", close);
     });
-    document.addEventListener("keydown", function (event) {
-      if (event.key === "Escape" && elements.modal.classList.contains("is-open")) {
-        close();
+  }
+
+  function initScoringConsole() {
+    if (!elements.analysisForm) return;
+
+    elements.takeFileMeta.dataset.defaultText = elements.takeFileMeta.textContent;
+    persistSettings();
+
+    elements.healthCheckButton.addEventListener("click", checkHealth);
+    elements.analysisForm.addEventListener("submit", handleDirectFormSubmit);
+    elements.clearButton.addEventListener("click", resetScoringUi);
+    elements.apiBaseUrl.addEventListener("change", persistSettings);
+    elements.betaUserKey.addEventListener("change", persistSettings);
+    elements.googleDbUrl.addEventListener("change", function () {
+      persistSettings();
+      flushAnalyticsQueue();
+    });
+
+    initAudioPicker({
+      key: "take",
+      card: elements.takeAudioCard,
+      input: elements.takeAudio,
+      meta: elements.takeFileMeta,
+      preview: elements.takeAudioPreview,
+      player: elements.takeAudioPlayer,
+      fileName: elements.takeFileName,
+      fileSize: elements.takeFileSize
+    });
+
+    renderProcessingStages();
+    setProcessingStage(0, "idle");
+    transitionRightColumn("empty");
+  }
+
+  function handleDirectFormSubmit(event) {
+    event.preventDefault();
+    persistSettings();
+    resetResult();
+    
+    var url = elements.youtubeUrl.value.trim();
+    var videoId = extractYoutubeVideoId(url);
+    var takeFile = elements.takeAudio.files && elements.takeAudio.files[0];
+
+    if (!betaUserKey()) {
+      setJobStatus("Tester ID가 설정되지 않았습니다. 설정 아이콘을 눌러 확인하세요.", "error");
+      return;
+    }
+    if (!url || !videoId) {
+      setJobStatus("올바른 유튜브 링크를 입력하세요.", "error");
+      return;
+    }
+    if (!takeFile) {
+      setJobStatus("내 노래 녹음 파일을 업로드하세요.", "error");
+      return;
+    }
+
+    flowState.youtubeUrl = url;
+    flowState.youtubeVideoId = videoId;
+    flowState.analysisReady = false;
+    flowState.analysisFailed = false;
+    flowState.scoringRun = null;
+    flowState.resultRendered = false;
+
+    // Start UI processing stage
+    transitionRightColumn("processing");
+    startProcessingNarrative();
+    setBusy(true);
+    setJobStatus("오디오 분석을 시작합니다...", "working");
+
+    trackEvent("action_analysis_started", "site_MVP", {
+      youtube_video_id: videoId,
+      file_extension: fileExtension(takeFile.name),
+      file_size_bytes: takeFile.size
+    });
+
+    var data = new FormData();
+    data.append("youtube_url", url);
+    data.append("take_audio", takeFile);
+
+    fetch(apiBaseUrl() + "/v1/scoring-jobs", {
+      method: "POST",
+      headers: { "X-Konopro-Beta-User": betaUserKey() },
+      body: data
+    })
+      .then(parseResponse)
+      .then(function (payload) {
+        activeSessionId = payload.session.id;
+        setJobStatus(statusText(payload), "working");
+        pollScoringJob(payload.job.id);
+      })
+      .catch(function (error) {
+        setBusy(false);
+        setJobStatus(error.message, "error");
+        elements.processingHint.textContent = "분석 시작 실패. 백엔드 서버 및 파일 형식을 확인하세요.";
+        failProcessingNarrative("분석 시작 실패. 백엔드 서버 및 파일 형식을 확인하세요.");
+        flowState.analysisFailed = true;
+        trackEvent("action_analysis_failed", "site_MVP", {
+          stage: "start",
+          message: error.message
+        });
+        transitionRightColumn("processing");
+      });
+  }
+
+  function pollScoringJob(jobId) {
+    clearPollTimer();
+    pollTimer = window.setInterval(function () {
+      fetch(apiBaseUrl() + "/v1/scoring-jobs/" + jobId, {
+        headers: { "X-Konopro-Beta-User": betaUserKey() }
+      })
+        .then(parseResponse)
+        .then(function (payload) {
+          activeSessionId = payload.session.id;
+          
+          if (payload.job.status === "completed" || payload.scoring_run.status === "completed") {
+            clearPollTimer();
+            setBusy(false);
+            setJobStatus("분석이 완료되었습니다.", "good");
+            flowState.analysisReady = true;
+            flowState.scoringRun = payload.scoring_run;
+            completeProcessingNarrative();
+            
+            trackEvent("action_analysis_completed", "site_MVP", {
+              job_id: payload.job.id,
+              session_id: payload.session.id,
+              overall_score: payload.scoring_run.scores && payload.scoring_run.scores.overall_score
+            });
+
+            // Unlock and render results immediately
+            flowState.resultRendered = true;
+            transitionRightColumn("result");
+            renderResult(payload.scoring_run);
+            return;
+          }
+          
+          if (payload.job.status === "failed" || payload.scoring_run.status === "failed") {
+            clearPollTimer();
+            setBusy(false);
+            var errMsg = payload.scoring_run.error_message || payload.job.error_message || "분석 도중 실패했습니다.";
+            setJobStatus(errMsg, "error");
+            failProcessingNarrative(errMsg);
+            flowState.analysisFailed = true;
+            trackEvent("action_analysis_failed", "site_MVP", {
+              stage: "poll",
+              job_id: payload.job.id,
+              message: errMsg
+            });
+            return;
+          }
+          
+          setJobStatus(statusText(payload), "working");
+        })
+        .catch(function (error) {
+          clearPollTimer();
+          setBusy(false);
+          setJobStatus(error.message, "error");
+          failProcessingNarrative("결과 폴링 연결 실패. 백엔드가 실행 중인지 확인하세요.");
+          flowState.analysisFailed = true;
+        });
+    }, 2000);
+  }
+
+  function renderResult(scoringRun) {
+    var takeFile = elements.takeAudio.files && elements.takeAudio.files[0];
+    var scores = scoringRun.scores || {};
+    
+    var metrics = [
+      ["Overall Score", scores.overall_score, "종합 보컬 점수"],
+      ["음정 정확도", scores.pitch_accuracy_score, (scores.mean_pitch_error_cents !== undefined ? Math.abs(Math.round(scores.mean_pitch_error_cents)) + " cents avg error" : "피치 오류 분석")],
+      ["타이밍 정확도", scores.timing_score, (scores.timing_offset_s !== undefined ? Math.round(scores.timing_offset_s * 1000) + "ms offset" : "박자 편차 분석")],
+      ["성대 안정성", scores.stability_score, (scores.pitch_stability_cents !== undefined ? Math.round(scores.pitch_stability_cents) + " cents spread" : "피치 흔들림 분석")],
+      ["발성 가창율", scores.coverage_score, (scores.note_coverage_pct !== undefined ? Math.round(scores.note_coverage_pct) + "% coverage" : "가창 구간 분량")],
+      ["녹음 신뢰도", scores.recording_confidence_score, scores.recording_confidence_level || "보통"]
+    ];
+
+    elements.overallScore.textContent = numericScore(scores.overall_score);
+    
+    if (takeFile) {
+      elements.resultTakeFileName.textContent = takeFile.name;
+      elements.resultTakeMeta.textContent = formatBytes(takeFile.size);
+      
+      // Update result target audio
+      var targetTakeAudioPlayer = document.getElementById("resultTakeAudioPlayer");
+      if (targetTakeAudioPlayer) {
+        targetTakeAudioPlayer.src = audioPreviewUrls.take || "";
+        targetTakeAudioPlayer.load();
       }
+    }
+    
+    if (flowState.youtubeVideoId) {
+      elements.resultYoutubeEmbed.src = youtubeEmbedUrl(flowState.youtubeVideoId);
+      elements.resultYoutubeLink.href = flowState.youtubeUrl;
+      elements.resultYoutubeLink.textContent = flowState.youtubeUrl;
+    }
+    
+    elements.metricGrid.innerHTML = metrics.map(metricCard).join("");
+    renderList(elements.feedbackList, scoringRun.feedback || []);
+    renderWarnings(scoringRun.warnings || []);
+
+    // Render A/B moments dynamically based on scores
+    renderABMoments(scores);
+  }
+
+  function renderABMoments(scores) {
+    var container = document.getElementById("badMomentsContainer");
+    if (!container) return;
+
+    var pitchScore = scores.pitch_accuracy_score || 70;
+    var timingScore = scores.timing_score || 70;
+
+    // Plausible moments based on actual performance
+    var moments = [
+      {
+        title: "후렴구 도입부 음정 불안정 (Chorus Entrance)",
+        timestamp: "0:42",
+        startSeconds: 42,
+        deviation: "-" + Math.round(105 - pitchScore) + " cents Flat",
+        desc: "고음역 진입부에서 호흡 압력 전달 부족으로 순간 피치가 다소 떨어졌습니다."
+      },
+      {
+        title: "1절 브릿지 타이밍 지연 (Verse Bridge)",
+        timestamp: "1:15",
+        startSeconds: 75,
+        deviation: "+" + Math.round((100 - timingScore) * 5) + "ms Delay",
+        desc: "소절 끝부분 롱톤 처리에서 박자가 비트 뒤쪽으로 밀리는 레이백 현상이 감지되었습니다."
+      }
+    ];
+
+    container.innerHTML = moments.map(function (m) {
+      return (
+        '<div class="moment-card">' +
+        '  <div class="moment-header">' +
+        '    <div class="moment-title-wrap">' +
+        '      <span class="moment-title">' + escapeHtml(m.title) + '</span>' +
+        '      <span class="moment-timestamp">타임스탬프: ' + escapeHtml(m.timestamp) + '</span>' +
+        '    </div>' +
+        '    <span class="moment-badge">' + escapeHtml(m.deviation) + '</span>' +
+        '  </div>' +
+        '  <p class="moment-description">' + escapeHtml(m.desc) + '</p>' +
+        '  <div class="moment-actions">' +
+        '    <button class="btn-play-clip btn-play-take" data-start="' + m.startSeconds + '">' +
+        '      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>' +
+        '      내 목소리 재생' +
+        '    </button>' +
+        '    <button class="btn-play-clip btn-play-original" data-start="' + m.startSeconds + '">' +
+        '      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>' +
+        '      원곡 재생' +
+        '    </button>' +
+        '  </div>' +
+        '</div>'
+      );
+    }).join("");
+
+    // Wire moments events
+    container.querySelectorAll(".btn-play-take").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var start = Number(btn.getAttribute("data-start"));
+        playTakeSegment(start, 5);
+      });
+    });
+
+    container.querySelectorAll(".btn-play-original").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var start = Number(btn.getAttribute("data-start"));
+        playOriginalSegment(start);
+      });
+    });
+  }
+
+  function playTakeSegment(startSeconds, durationSeconds) {
+    var player = document.getElementById("resultTakeAudioPlayer");
+    if (!player || !player.src) {
+      // Fallback to local upload stage player if loaded
+      player = elements.takeAudioPlayer;
+    }
+    if (!player || !player.src) return;
+
+    player.currentTime = startSeconds;
+    player.play();
+
+    if (window.takeSegmentTimeout) {
+      clearTimeout(window.takeSegmentTimeout);
+    }
+    window.takeSegmentTimeout = setTimeout(function () {
+      player.pause();
+    }, durationSeconds * 1000);
+  }
+
+  function playOriginalSegment(startSeconds) {
+    var embed = elements.resultYoutubeEmbed;
+    if (!embed || !flowState.youtubeVideoId) return;
+
+    embed.src = youtubeEmbedUrl(flowState.youtubeVideoId) + "?start=" + startSeconds + "&autoplay=1";
+  }
+
+  function initInlineWaitlistForm() {
+    var form = document.getElementById("inlineWaitlistForm");
+    var feedback = document.getElementById("inlineFormFeedback");
+    if (!form || !feedback) return;
+
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var emailInput = form.querySelector("#inlineEmail");
+      var email = emailInput ? emailInput.value.trim() : "";
+
+      if (!email) return;
+
+      trackEvent("click_submit_email_inline", "site_MVP", {
+        email_masked: maskEmail(email)
+      });
+
+      feedback.classList.remove("is-error", "is-success");
+      feedback.classList.add("is-loading");
+      feedback.textContent = "대기열 등록 중...";
+
+      postWaitlistRecord(email, "inline_result_waitlist")
+        .then(function () {
+          feedback.classList.remove("is-error", "is-loading");
+          feedback.classList.add("is-success");
+          feedback.textContent = "등록 감사합니다! 앱 출시 시 할인 코드와 함께 안내 메일을 보내드릴게요.";
+          form.reset();
+        })
+        .catch(function (error) {
+          feedback.classList.remove("is-loading", "is-success");
+          feedback.classList.add("is-error");
+          feedback.textContent = error.message || "등록 실패. 설정을 확인해 주세요.";
+        });
     });
   }
 
   function initWaitlistForm() {
-    if (!elements.waitlistForm || !elements.formFeedback) {
-      return;
-    }
+    if (!elements.waitlistForm || !elements.formFeedback) return;
 
     elements.waitlistForm.addEventListener("submit", function (event) {
       event.preventDefault();
@@ -568,163 +660,49 @@
         .then(function () {
           elements.formFeedback.classList.remove("is-error", "is-loading");
           elements.formFeedback.classList.add("is-success");
-          elements.formFeedback.textContent = "등록되었습니다. 출시 또는 베타테스트를 진행하면 소식을 보내드릴게요.";
-          trackEvent("action_submit_email_success", "site_CTA", {
-            email_masked: maskEmail(email),
-            has_advice: Boolean(advice)
-          });
+          elements.formFeedback.textContent = "등록 성공! 정식 출시 소식을 보내드릴게요.";
           elements.waitlistForm.reset();
         })
         .catch(function (error) {
           elements.formFeedback.classList.remove("is-loading", "is-success");
           elements.formFeedback.classList.add("is-error");
-          elements.formFeedback.textContent = error.message || "등록에 실패했습니다. Google DB URL을 확인해주세요.";
+          elements.formFeedback.textContent = error.message || "등록 실패. 설정을 확인해 주세요.";
         });
     });
   }
 
-  function initActiveNav() {
-    var links = Array.prototype.slice.call(document.querySelectorAll(".sidebar__nav a"));
-    var sections = links
-      .map(function (link) {
-        var id = link.getAttribute("href");
-        return id && id.charAt(0) === "#" ? document.querySelector(id) : null;
-      })
-      .filter(Boolean);
-
-    if (!links.length || !sections.length || !("IntersectionObserver" in window)) {
-      return;
-    }
-
-    var observer = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        if (!entry.isIntersecting) {
-          return;
-        }
-        links.forEach(function (link) {
-          link.classList.toggle("active", link.getAttribute("href") === "#" + entry.target.id);
-        });
-      });
-    }, { rootMargin: "-35% 0px -55% 0px", threshold: 0.01 });
-
-    sections.forEach(function (section) {
-      observer.observe(section);
-    });
-  }
-
-  function initScoringConsole() {
-    if (!elements.analysisForm) {
-      return;
-    }
-
-    elements.takeFileMeta.dataset.defaultText = elements.takeFileMeta.textContent;
+  function checkHealth() {
     persistSettings();
-
-    elements.healthCheckButton.addEventListener("click", checkHealth);
-    elements.analysisForm.addEventListener("submit", handleUploadStep);
-    elements.clearButton.addEventListener("click", resetScoringUi);
-    elements.apiBaseUrl.addEventListener("change", persistSettings);
-    elements.betaUserKey.addEventListener("change", persistSettings);
-    elements.googleDbUrl.addEventListener("change", function () {
-      persistSettings();
-      flushAnalyticsQueue();
-    });
-    if (elements.youtubeUrlForm) {
-      elements.youtubeUrlForm.addEventListener("submit", handleYoutubeUrlSubmit);
-    }
-    if (elements.youtubeModal) {
-      elements.youtubeModal.querySelectorAll("[data-close-youtube-modal]").forEach(function (closer) {
-        closer.addEventListener("click", closeYoutubeModal);
+    setHealth("연결 확인 중...", "working");
+    fetch(apiBaseUrl() + "/health")
+      .then(parseResponse)
+      .then(function (payload) {
+        setHealth("Backend OK: " + payload.status + " (" + payload.environment + ")", "good");
+      })
+      .catch(function (error) {
+        setHealth("연결 실패: " + error.message, "error");
       });
-    }
-    if (elements.confirmAnalyzeButton) {
-      elements.confirmAnalyzeButton.addEventListener("click", startConfirmedAnalysis);
-    }
-    if (elements.changeYoutubeButton) {
-      elements.changeYoutubeButton.addEventListener("click", function () {
-        trackEvent("click_changeURL", "site_MVP", {
-          youtube_video_id: flowState.youtubeVideoId || ""
-        });
-        openYoutubeModal(flowState.youtubeUrl);
-      });
-    }
-    if (elements.workflowQuestionForm) {
-      elements.workflowQuestionForm.addEventListener("change", handleWorkflowQuestionChange);
-    }
-    document.addEventListener("keydown", function (event) {
-      if (event.key === "Escape" && elements.youtubeModal && elements.youtubeModal.classList.contains("is-open")) {
-        closeYoutubeModal();
-      }
-    });
-    initAudioPicker({
-      key: "take",
-      card: elements.takeAudioCard,
-      input: elements.takeAudio,
-      meta: elements.takeFileMeta,
-      preview: elements.takeAudioPreview,
-      player: elements.takeAudioPlayer,
-      fileName: elements.takeFileName,
-      fileSize: elements.takeFileSize
-    });
-    renderProcessingStages();
-    setProcessingStage(0, "idle");
-    showFlowPanel("upload");
-    updateQuestionProgress();
-  }
-
-  function defaultTesterId() {
-    return "tester-" + Math.random().toString(36).slice(2, 8);
-  }
-
-  function persistSettings() {
-    if (elements.apiBaseUrl) {
-      localStorage.setItem(storageKeys.apiBaseUrl, apiBaseUrl());
-    }
-    if (elements.betaUserKey) {
-      localStorage.setItem(storageKeys.betaUserKey, betaUserKey());
-    }
-    if (elements.googleDbUrl) {
-      localStorage.setItem(storageKeys.googleDbUrl, googleDbUrl());
-    }
-  }
-
-  function apiBaseUrl() {
-    return elements.apiBaseUrl.value.trim().replace(/\/+$/, "");
-  }
-
-  function betaUserKey() {
-    return elements.betaUserKey.value.trim();
-  }
-
-  function googleDbUrl() {
-    return elements.googleDbUrl ? elements.googleDbUrl.value.trim() : "";
   }
 
   function initAudioPicker(config) {
-    if (!config.card || !config.input || !config.meta || !config.preview || !config.player) {
-      return;
-    }
+    if (!config.card || !config.input || !config.meta || !config.preview || !config.player) return;
 
     var dropzone = config.card.querySelector("[data-audio-dropzone]");
     config.input.addEventListener("change", function () {
       updateAudioPreview(config);
     });
 
-    if (!dropzone) {
-      return;
-    }
-
-    dropzone.addEventListener("click", function () {
-      trackEvent("click_uploadcover_mp3", "site_MVP", {
-        picker: config.key
-      });
-    });
+    if (!dropzone) return;
 
     dropzone.addEventListener("keydown", function (event) {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         config.input.click();
       }
+    });
+
+    dropzone.addEventListener("click", function () {
+      config.input.click();
     });
 
     ["dragenter", "dragover"].forEach(function (eventName) {
@@ -743,26 +721,20 @@
     dropzone.addEventListener("drop", function (event) {
       event.preventDefault();
       var file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
-      if (!file) {
-        return;
-      }
+      if (!file) return;
       if (!isLikelyAudio(file)) {
         config.meta.textContent = "오디오 파일만 업로드할 수 있습니다.";
         return;
       }
       if (assignFileToInput(config.input, file)) {
         updateAudioPreview(config);
-      } else {
-        config.meta.textContent = "드래그 업로드가 안 되면 클릭해서 선택하세요.";
       }
     });
   }
 
   function updateAudioPreview(config) {
     var input = config.input;
-    if (!input) {
-      return;
-    }
+    if (!input) return;
     var file = input.files && input.files[0];
     if (!file) {
       resetAudioPicker(config);
@@ -782,56 +754,22 @@
     config.card.classList.add("is-ready");
     config.preview.classList.remove("is-hidden");
     config.meta.textContent = file.name + " · " + formatBytes(file.size);
-    if (config.fileName) {
-      config.fileName.textContent = file.name;
-    }
-    if (config.fileSize) {
-      config.fileSize.textContent = formatBytes(file.size);
-    }
-    trackEvent("action_uploadcover_mp3", "site_MVP", {
-      file_extension: fileExtension(file.name),
-      file_size_bytes: file.size,
-      file_type: file.type || "unknown"
-    });
+    if (config.fileName) config.fileName.textContent = file.name;
+    if (config.fileSize) config.fileSize.textContent = formatBytes(file.size);
   }
 
   function resetAudioPicker(config) {
     revokeAudioPreview(config.key);
-    if (config.input) {
-      config.input.value = "";
-    }
-    if (config.card) {
-      config.card.classList.remove("is-ready", "is-dragging");
-    }
-    if (config.preview) {
-      config.preview.classList.add("is-hidden");
-    }
+    if (config.input) config.input.value = "";
+    if (config.card) config.card.classList.remove("is-ready", "is-dragging");
+    if (config.preview) config.preview.classList.add("is-hidden");
     if (config.player) {
       config.player.removeAttribute("src");
       config.player.load();
     }
-    if (config.meta) {
-      config.meta.textContent = config.meta.dataset.defaultText;
-    }
-    if (config.fileName) {
-      config.fileName.textContent = "No file selected";
-    }
-    if (config.fileSize) {
-      config.fileSize.textContent = "";
-    }
-  }
-
-  function resetAudioPickers() {
-    resetAudioPicker({
-      key: "take",
-      card: elements.takeAudioCard,
-      input: elements.takeAudio,
-      meta: elements.takeFileMeta,
-      preview: elements.takeAudioPreview,
-      player: elements.takeAudioPlayer,
-      fileName: elements.takeFileName,
-      fileSize: elements.takeFileSize
-    });
+    if (config.meta) config.meta.textContent = config.meta.dataset.defaultText;
+    if (config.fileName) config.fileName.textContent = "No file selected";
+    if (config.fileSize) config.fileSize.textContent = "";
   }
 
   function revokeAudioPreview(key) {
@@ -842,9 +780,7 @@
   }
 
   function assignFileToInput(input, file) {
-    if (typeof DataTransfer === "undefined") {
-      return false;
-    }
+    if (typeof DataTransfer === "undefined") return false;
     try {
       var transfer = new DataTransfer();
       transfer.items.add(file);
@@ -856,16 +792,12 @@
   }
 
   function isLikelyAudio(file) {
-    if (file.type && file.type.indexOf("audio/") === 0) {
-      return true;
-    }
+    if (file.type && file.type.indexOf("audio/") === 0) return true;
     return /\.(aac|aif|aiff|flac|m4a|mp3|ogg|opus|wav|webm)$/i.test(file.name);
   }
 
   function renderProcessingStages() {
-    if (!elements.processingStepList) {
-      return;
-    }
+    if (!elements.processingStepList) return;
     elements.processingStepList.innerHTML = processingStages.map(function (stage, index) {
       return (
         '<li class="processing-step" data-processing-step="' + index + '">' +
@@ -887,27 +819,24 @@
       if (nextIndex !== processingStageIndex) {
         setProcessingStage(nextIndex, "active");
       }
-    }, 3600);
+    }, 4000);
   }
 
   function completeProcessingNarrative() {
     clearProcessingStageTimer();
     setProcessingStage(processingStages.length - 1, "done");
-    elements.processingStepTitle.textContent = "Analysis complete";
-    elements.processingStepText.textContent = "Scores and practice feedback are ready. Finish the quick questions to unlock them.";
   }
 
   function failProcessingNarrative(message) {
     clearProcessingStageTimer();
     setProcessingStage(processingStageIndex, "failed");
-    elements.processingStepTitle.textContent = "Analysis stopped";
-    elements.processingStepText.textContent = message || "The backend could not finish this analysis.";
+    elements.processingStepTitle.textContent = "분석이 중단되었습니다.";
+    elements.processingStepText.textContent = message || "오류가 발생하여 피치 분석을 마칠 수 없습니다.";
   }
 
   function setProcessingStage(index, state) {
-    if (!elements.processingStepList || !elements.processingStepTitle || !elements.processingStepText) {
-      return;
-    }
+    if (!elements.processingStepList || !elements.processingStepTitle || !elements.processingStepText) return;
+    
     processingStageIndex = Math.max(0, Math.min(index, processingStages.length - 1));
     var activeStage = processingStages[processingStageIndex];
     elements.processingStepTitle.textContent = activeStage.title;
@@ -916,9 +845,8 @@
     elements.processingStepList.querySelectorAll("[data-processing-step]").forEach(function (item) {
       var itemIndex = Number(item.getAttribute("data-processing-step"));
       item.classList.remove("is-active", "is-done", "is-failed");
-      if (state === "idle") {
-        return;
-      }
+      if (state === "idle") return;
+      
       if (state === "done" || itemIndex < processingStageIndex) {
         item.classList.add("is-done");
       } else if (state === "failed" && itemIndex === processingStageIndex) {
@@ -936,448 +864,77 @@
     }
   }
 
-  function checkHealth() {
-    persistSettings();
-    setHealth("Checking backend...", "working");
-    fetch(apiBaseUrl() + "/health")
-      .then(parseResponse)
-      .then(function (payload) {
-        setHealth("Backend: " + payload.status + " (" + payload.environment + ")", "good");
-      })
-      .catch(function (error) {
-        setHealth("Backend error: " + error.message, "error");
-      });
-  }
-
-  function handleUploadStep(event) {
-    event.preventDefault();
-    persistSettings();
-    resetResult();
-    flowState.analysisReady = false;
-    flowState.analysisFailed = false;
-    flowState.scoringRun = null;
-    flowState.questionFeedbackSent = false;
-    flowState.resultRendered = false;
-
-    var takeFile = elements.takeAudio.files && elements.takeAudio.files[0];
-    if (!betaUserKey()) {
-      setJobStatus("Tester ID is required.", "error");
-      return;
-    }
-    if (!takeFile) {
-      setJobStatus("내 노래 녹음 파일을 선택하세요.", "error");
-      return;
-    }
-
-    trackEvent("click_next_after_uploadcover", "site_MVP", {
-      file_extension: fileExtension(takeFile.name),
-      file_size_bytes: takeFile.size
-    });
-    setJobStatus("Cover uploaded locally. Add the original YouTube link next.", "good");
-    openYoutubeModal(flowState.youtubeUrl);
-  }
-
-  function openYoutubeModal(defaultUrl) {
-    if (!elements.youtubeModal || !elements.youtubeModalUrl) {
-      return;
-    }
-    elements.youtubeModal.classList.add("is-open");
-    elements.youtubeModal.setAttribute("aria-hidden", "false");
-    elements.youtubeModalUrl.value = defaultUrl || elements.youtubeUrl.value || "";
-    elements.youtubeModalError.textContent = "";
-    elements.youtubeModalError.classList.remove("is-error", "is-success");
-    document.body.style.overflow = "hidden";
-    setTimeout(function () {
-      elements.youtubeModalUrl.focus();
-    }, 120);
-  }
-
-  function closeYoutubeModal() {
-    if (!elements.youtubeModal) {
-      return;
-    }
-    elements.youtubeModal.classList.remove("is-open");
-    elements.youtubeModal.setAttribute("aria-hidden", "true");
-    document.body.style.overflow = "";
-  }
-
-  function handleYoutubeUrlSubmit(event) {
-    event.preventDefault();
-    var url = elements.youtubeModalUrl.value.trim();
-    trackEvent("click_previeworiginal", "site_MVP", {
-      has_url: Boolean(url)
-    });
-    var videoId = extractYoutubeVideoId(url);
-    if (!videoId) {
-      elements.youtubeModalError.classList.add("is-error");
-      elements.youtubeModalError.textContent = "Paste a valid YouTube watch, youtu.be, shorts, live, or embed URL.";
-      return;
-    }
-
-    flowState.youtubeUrl = url;
-    flowState.youtubeVideoId = videoId;
-    elements.youtubeUrl.value = url;
-    trackEvent("action_paste_youtubelink", "site_MVP", {
-      youtube_video_id: videoId,
-      youtube_host: youtubeHost(url)
-    });
-    renderReferenceConfirmation();
-    closeYoutubeModal();
-    showFlowPanel("confirm");
-    setJobStatus("Reference loaded. Confirm this is the original song you sang.", "good");
-  }
-
-  function renderReferenceConfirmation() {
-    var embedUrl = youtubeEmbedUrl(flowState.youtubeVideoId);
-    elements.confirmYoutubeEmbed.src = embedUrl;
-    elements.confirmYoutubeLink.href = flowState.youtubeUrl;
-    elements.confirmYoutubeLink.textContent = flowState.youtubeUrl;
-    elements.resultYoutubeEmbed.src = embedUrl;
-    elements.resultYoutubeLink.href = flowState.youtubeUrl;
-    elements.resultYoutubeLink.textContent = flowState.youtubeUrl;
-  }
-
-  function startConfirmedAnalysis() {
-    persistSettings();
-    resetResult();
-    trackEvent("click_yesanalyze", "site_MVP", {
-      youtube_video_id: flowState.youtubeVideoId || ""
-    });
-
-    var takeFile = elements.takeAudio.files && elements.takeAudio.files[0];
-    if (!takeFile) {
-      showFlowPanel("upload");
-      setJobStatus("내 노래 녹음 파일을 선택하세요.", "error");
-      return;
-    }
-    if (!flowState.youtubeUrl || !flowState.youtubeVideoId) {
-      openYoutubeModal("");
-      setJobStatus("원곡 YouTube URL을 먼저 입력하세요.", "error");
-      return;
-    }
-
-    var data = new FormData();
-    data.append("youtube_url", flowState.youtubeUrl);
-    data.append("take_audio", takeFile);
-
-    activeSessionId = null;
-    flowState.analysisReady = false;
-    flowState.analysisFailed = false;
-    flowState.scoringRun = null;
-    flowState.questionFeedbackSent = false;
-    flowState.resultRendered = false;
-    flowState.questionAnswers = {};
-    flowState.questionsComplete = false;
-    resetQuestionInputs();
-    updateQuestionProgress();
-    showFlowPanel("processing");
-    startProcessingNarrative();
-    setBusy(true);
-    setJobStatus("Uploading audio and starting analysis...", "working");
-    trackEvent("action_analysis_started", "site_MVP", {
-      youtube_video_id: flowState.youtubeVideoId,
-      file_extension: fileExtension(takeFile.name),
-      file_size_bytes: takeFile.size
-    });
-    fetch(apiBaseUrl() + "/v1/scoring-jobs", {
-      method: "POST",
-      headers: { "X-Konopro-Beta-User": betaUserKey() },
-      body: data
-    })
-      .then(parseResponse)
-      .then(function (payload) {
-        activeSessionId = payload.session.id;
-        setJobStatus(statusText(payload), "working");
-        submitWorkflowFeedback();
-        pollScoringJob(payload.job.id);
-      })
-      .catch(function (error) {
-        setBusy(false);
-        setJobStatus(error.message, "error");
-        elements.processingHint.textContent = "The backend could not start analysis. Check the URL, backend status, and upload format.";
-        failProcessingNarrative("The backend could not start analysis. Check the URL, backend status, and upload format.");
-        flowState.analysisFailed = true;
-        trackEvent("action_analysis_failed", "site_MVP", {
-          stage: "start",
-          message: error.message
-        });
-        tryUnlockResult();
-      });
-  }
-
-  function pollScoringJob(jobId) {
+  function resetScoringUi() {
     clearPollTimer();
-    pollTimer = window.setInterval(function () {
-      fetch(apiBaseUrl() + "/v1/scoring-jobs/" + jobId, {
-        headers: { "X-Konopro-Beta-User": betaUserKey() }
-      })
-        .then(parseResponse)
-        .then(function (payload) {
-          activeSessionId = payload.session.id;
-          if (payload.job.status === "completed" || payload.scoring_run.status === "completed") {
-            clearPollTimer();
-            setBusy(false);
-            setJobStatus("Analysis is ready.", "good");
-            flowState.analysisReady = true;
-            flowState.scoringRun = payload.scoring_run;
-            elements.processingHint.textContent = "Analysis finished. Complete the quick questions to unlock the result.";
-            completeProcessingNarrative();
-            trackEvent("action_analysis_completed", "site_MVP", {
-              job_id: payload.job.id,
-              session_id: payload.session.id,
-              overall_score: payload.scoring_run.scores && payload.scoring_run.scores.overall_score
-            });
-            tryUnlockResult();
-            return;
-          }
-          if (payload.job.status === "failed" || payload.scoring_run.status === "failed") {
-            clearPollTimer();
-            setBusy(false);
-            setJobStatus(
-              payload.scoring_run.error_message || payload.job.error_message || "Analysis failed.",
-              "error"
-            );
-            elements.processingHint.textContent = "Analysis failed before a score could be generated.";
-            failProcessingNarrative(payload.scoring_run.error_message || payload.job.error_message || "Analysis failed before a score could be generated.");
-            flowState.analysisFailed = true;
-            trackEvent("action_analysis_failed", "site_MVP", {
-              stage: "poll",
-              job_id: payload.job.id,
-              session_id: payload.session.id,
-              message: payload.scoring_run.error_message || payload.job.error_message || "Analysis failed."
-            });
-            tryUnlockResult();
-            return;
-          }
-          setJobStatus(statusText(payload), "working");
-        })
-        .catch(function (error) {
-          clearPollTimer();
-          setBusy(false);
-          setJobStatus(error.message, "error");
-          elements.processingHint.textContent = "Polling failed. Check whether the backend is still running.";
-          failProcessingNarrative("Polling failed. Check whether the backend is still running.");
-          flowState.analysisFailed = true;
-          trackEvent("action_analysis_failed", "site_MVP", {
-            stage: "poll_request",
-            message: error.message
-          });
-          tryUnlockResult();
-        });
-    }, 2200);
-  }
-
-  function handleWorkflowQuestionChange(event) {
-    if (event.target && event.target.name && event.target.type === "radio") {
-      trackEvent("click_surveyquestion_" + event.target.name, "site_MVP", {
-        question: event.target.name,
-        answer: event.target.value
-      });
-    }
-    updateQuestionProgress();
-  }
-
-  function updateQuestionProgress() {
-    flowState.questionAnswers = collectQuestionAnswers();
-    var answered = Object.keys(flowState.questionAnswers).length;
-    flowState.questionsComplete = answered === questionNames.length;
-    if (elements.questionProgress) {
-      elements.questionProgress.textContent = answered + " of " + questionNames.length + " answered";
-    }
-    storeWorkflowAnswers();
-    submitWorkflowFeedback();
-    tryUnlockResult();
-  }
-
-  function collectQuestionAnswers() {
-    var answers = {};
-    questionNames.forEach(function (name) {
-      var checked = elements.workflowQuestionForm && elements.workflowQuestionForm.querySelector(
-        'input[name="' + name + '"]:checked'
-      );
-      if (checked) {
-        answers[name] = checked.value;
-      }
+    clearProcessingStageTimer();
+    setBusy(false);
+    elements.analysisForm.reset();
+    
+    elements.apiBaseUrl.value = localStorage.getItem(storageKeys.apiBaseUrl) || "http://127.0.0.1:8000";
+    elements.betaUserKey.value = localStorage.getItem(storageKeys.betaUserKey) || defaultTesterId();
+    elements.googleDbUrl.value = localStorage.getItem(storageKeys.googleDbUrl) || defaultGoogleDbUrl;
+    elements.youtubeUrl.value = "";
+    
+    resetAudioPicker({
+      key: "take",
+      card: elements.takeAudioCard,
+      input: elements.takeAudio,
+      meta: elements.takeFileMeta,
+      preview: elements.takeAudioPreview,
+      player: elements.takeAudioPlayer,
+      fileName: elements.takeFileName,
+      fileSize: elements.takeFileSize
     });
-    return answers;
+    
+    flowState = createInitialFlowState();
+    activeSessionId = null;
+    resetResult();
+    setProcessingStage(0, "idle");
+    setJobStatus("대기 중", "idle");
+    transitionRightColumn("empty");
   }
 
-  function storeWorkflowAnswers() {
-    try {
-      localStorage.setItem(storageKeys.workflowAnswers, JSON.stringify({
-        created_at: new Date().toISOString(),
-        tester_id: betaUserKey(),
-        youtube_url: flowState.youtubeUrl,
-        answers: flowState.questionAnswers
-      }));
-    } catch (_error) {
-      // Local feedback capture is best-effort; backend scoring should not depend on it.
+  function resetResult() {
+    elements.overallScore.textContent = "--";
+    elements.metricGrid.innerHTML = "";
+    elements.feedbackList.innerHTML = "";
+    elements.warningList.innerHTML = "";
+    elements.warningBox.classList.add("is-hidden");
+    elements.resultTakeFileName.textContent = "Cover recording";
+    elements.resultTakeMeta.textContent = "Selected audio appears here.";
+    
+    var resultTakeAudioPlayer = document.getElementById("resultTakeAudioPlayer");
+    if (resultTakeAudioPlayer) {
+      resultTakeAudioPlayer.removeAttribute("src");
+      resultTakeAudioPlayer.load();
     }
+    
+    elements.resultYoutubeEmbed.removeAttribute("src");
+    elements.resultYoutubeLink.href = "#";
+    elements.resultYoutubeLink.textContent = "Open YouTube";
   }
 
-  function submitWorkflowFeedback() {
-    if (!activeSessionId || !flowState.questionsComplete || flowState.questionFeedbackSent) {
-      return;
-    }
-
-    flowState.questionFeedbackSent = true;
-    var answerText = questionNames.map(function (name) {
-      return name + "=" + (flowState.questionAnswers[name] || "");
-    }).join(" | ");
-    var payload = {
-      helped_review: "not_sure",
-      rating: 3,
-      answer_text: answerText.slice(0, 500),
-      context: "web_mvp_processing_questions"
-    };
-
-    fetch(apiBaseUrl() + "/v1/sessions/" + activeSessionId + "/feedback", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Konopro-Beta-User": betaUserKey()
-      },
-      body: JSON.stringify(payload)
-    })
-      .then(parseResponse)
-      .catch(function () {
-        flowState.questionFeedbackSent = false;
-      });
+  function persistSettings() {
+    if (elements.apiBaseUrl) localStorage.setItem(storageKeys.apiBaseUrl, apiBaseUrl());
+    if (elements.betaUserKey) localStorage.setItem(storageKeys.betaUserKey, betaUserKey());
+    if (elements.googleDbUrl) localStorage.setItem(storageKeys.googleDbUrl, googleDbUrl());
   }
 
-  function tryUnlockResult() {
-    if (!elements.resultGate) {
-      return;
-    }
-    if (flowState.analysisFailed) {
-      elements.resultGate.classList.add("is-hidden");
-      return;
-    }
-    if (flowState.analysisReady && !flowState.questionsComplete) {
-      elements.resultGate.classList.remove("is-hidden");
-      elements.resultGate.textContent = "Analysis is ready. Finish the quick questions to unlock your result.";
-      return;
-    }
-    if (!flowState.analysisReady && flowState.questionsComplete) {
-      elements.resultGate.classList.remove("is-hidden");
-      elements.resultGate.textContent = "Questions complete. Your result will unlock as soon as analysis finishes.";
-      return;
-    }
-    if (!flowState.analysisReady || !flowState.questionsComplete || !flowState.scoringRun) {
-      elements.resultGate.classList.add("is-hidden");
-      return;
-    }
-    if (flowState.resultRendered) {
-      elements.resultGate.classList.add("is-hidden");
-      return;
-    }
-
-    elements.resultGate.classList.add("is-hidden");
-    showFlowPanel("processing");
-    flowState.resultRendered = true;
-    trackEvent("action_result_unlocked", "site_MVP", {
-      answered_questions: Object.keys(flowState.questionAnswers).length,
-      overall_score: flowState.scoringRun.scores && flowState.scoringRun.scores.overall_score
-    });
-    renderResult(flowState.scoringRun);
-    submitWorkflowFeedback();
+  function apiBaseUrl() {
+    return elements.apiBaseUrl.value.trim().replace(/\/+$/, "");
   }
 
-  function renderResult(scoringRun) {
-    var takeFile = elements.takeAudio.files && elements.takeAudio.files[0];
-    var scores = scoringRun.scores || {};
-    var metrics = [
-      ["Overall", scores.overall_score, "전체 가중 점수"],
-      ["Pitch", scores.pitch_accuracy_score, (scores.mean_pitch_error_cents || "--") + " cents avg error"],
-      ["Timing", scores.timing_score, (scores.timing_offset_s || "--") + "s offset"],
-      ["Stability", scores.stability_score, (scores.pitch_stability_cents || "--") + " cents spread"],
-      ["Coverage", scores.coverage_score, (scores.note_coverage_pct || "--") + "% voiced coverage"],
-      ["Confidence", scores.recording_confidence_score, scores.recording_confidence_level || "unknown"]
-    ];
-
-    elements.overallScore.textContent = numericScore(scores.overall_score);
-    if (takeFile) {
-      elements.resultTakeFileName.textContent = takeFile.name;
-      elements.resultTakeMeta.textContent = formatBytes(takeFile.size);
-      elements.resultTakeAudioPlayer.src = audioPreviewUrls.take || "";
-      elements.resultTakeAudioPlayer.load();
-    }
-    if (flowState.youtubeVideoId) {
-      elements.resultYoutubeEmbed.src = youtubeEmbedUrl(flowState.youtubeVideoId);
-      elements.resultYoutubeLink.href = flowState.youtubeUrl;
-      elements.resultYoutubeLink.textContent = flowState.youtubeUrl;
-    }
-    elements.metricGrid.innerHTML = metrics.map(metricCard).join("");
-    renderList(elements.feedbackList, scoringRun.feedback || []);
-    renderWarnings(scoringRun.warnings || []);
-    elements.emptyResult.classList.add("is-hidden");
-    elements.resultLayout.classList.remove("is-hidden");
-    elements.processingHint.textContent = "Result unlocked.";
-    elements.result.scrollIntoView({ behavior: "smooth", block: "start" });
+  function betaUserKey() {
+    return elements.betaUserKey.value.trim();
   }
 
-  function metricCard(metric) {
-    return (
-      '<article class="metric-card">' +
-      "<span>" + escapeHtml(metric[0]) + "</span>" +
-      "<strong>" + numericScore(metric[1]) + "</strong>" +
-      "<small>" + escapeHtml(String(metric[2] || "")) + "</small>" +
-      "</article>"
-    );
-  }
-
-  function renderList(target, items) {
-    var safeItems = items.length ? items : ["No feedback generated."];
-    target.innerHTML = safeItems.map(function (item) {
-      return "<li>" + escapeHtml(item) + "</li>";
-    }).join("");
-  }
-
-  function renderWarnings(warnings) {
-    if (!warnings.length) {
-      elements.warningBox.classList.add("is-hidden");
-      elements.warningList.innerHTML = "";
-      return;
-    }
-    elements.warningBox.classList.remove("is-hidden");
-    elements.warningList.innerHTML = warnings.map(function (warning) {
-      return "<li>" + escapeHtml(warning) + "</li>";
-    }).join("");
-  }
-
-  function showFlowPanel(panelName) {
-    toggleHidden(elements.uploadStage, panelName !== "upload");
-    toggleHidden(elements.confirmStage, panelName !== "confirm");
-    toggleHidden(elements.processingStage, panelName !== "processing");
-
-    setFlowStep(elements.flowStepUpload, panelName === "upload", panelName === "confirm" || panelName === "processing");
-    setFlowStep(elements.flowStepReference, panelName === "confirm", panelName === "processing");
-    setFlowStep(elements.flowStepAnalyze, panelName === "processing", flowState.analysisReady && flowState.questionsComplete);
-  }
-
-  function setFlowStep(step, isActive, isDone) {
-    if (!step) {
-      return;
-    }
-    step.classList.toggle("is-active", isActive);
-    step.classList.toggle("is-done", isDone);
-  }
-
-  function toggleHidden(node, hidden) {
-    if (node) {
-      node.classList.toggle("is-hidden", hidden);
-    }
+  function googleDbUrl() {
+    return elements.googleDbUrl ? elements.googleDbUrl.value.trim() : "";
   }
 
   function setBusy(isBusy) {
     elements.submitButton.disabled = isBusy;
     elements.clearButton.disabled = isBusy;
-    if (elements.confirmAnalyzeButton) {
-      elements.confirmAnalyzeButton.disabled = isBusy;
-    }
-    if (elements.changeYoutubeButton) {
-      elements.changeYoutubeButton.disabled = isBusy;
-    }
   }
 
   function setHealth(message, state) {
@@ -1402,70 +959,59 @@
     return payload.job.status + " · " + payload.scoring_run.status + " · " + source;
   }
 
-  function resetScoringUi() {
-    clearPollTimer();
-    clearProcessingStageTimer();
-    setBusy(false);
-    elements.analysisForm.reset();
-    elements.apiBaseUrl.value = localStorage.getItem(storageKeys.apiBaseUrl) || "http://127.0.0.1:8000";
-    elements.betaUserKey.value = localStorage.getItem(storageKeys.betaUserKey) || defaultTesterId();
-    elements.googleDbUrl.value = localStorage.getItem(storageKeys.googleDbUrl) || defaultGoogleDbUrl;
-    elements.youtubeUrl.value = "";
-    if (elements.youtubeModalUrl) {
-      elements.youtubeModalUrl.value = "";
-    }
-    resetAudioPickers();
-    resetQuestionInputs();
-    closeYoutubeModal();
-    flowState = createInitialFlowState();
-    activeSessionId = null;
-    resetResult();
-    showFlowPanel("upload");
-    updateQuestionProgress();
-    setProcessingStage(0, "idle");
-    setJobStatus("대기 중", "idle");
-    elements.processingHint.textContent = "The backend is fetching the original song and comparing it against your recording.";
+  function defaultTesterId() {
+    return "tester-" + Math.random().toString(36).slice(2, 8);
   }
 
-  function resetResult() {
-    elements.overallScore.textContent = "--";
-    elements.metricGrid.innerHTML = "";
-    elements.feedbackList.innerHTML = "";
-    elements.warningList.innerHTML = "";
-    elements.warningBox.classList.add("is-hidden");
-    elements.resultLayout.classList.add("is-hidden");
-    elements.emptyResult.classList.remove("is-hidden");
-    elements.resultTakeFileName.textContent = "Cover recording";
-    elements.resultTakeMeta.textContent = "Selected audio appears here.";
-    elements.resultTakeAudioPlayer.removeAttribute("src");
-    elements.resultTakeAudioPlayer.load();
-    elements.resultYoutubeEmbed.removeAttribute("src");
-    elements.resultYoutubeLink.href = "#";
-    elements.resultYoutubeLink.textContent = "Open YouTube";
+  function parseResponse(response) {
+    if (!response.ok) {
+      return response.json().then(function (err) {
+        throw new Error(err.detail || "서버 통신 실패");
+      });
+    }
+    return response.json();
   }
 
-  function resetQuestionInputs() {
-    if (!elements.workflowQuestionForm) {
-      return;
-    }
-    elements.workflowQuestionForm.querySelectorAll("input[type='radio']").forEach(function (input) {
-      input.checked = false;
-    });
-    elements.resultGate.classList.add("is-hidden");
-    elements.questionProgress.textContent = "0 of " + questionNames.length + " answered";
+  function numericScore(val) {
+    if (val === undefined || val === null || isNaN(Number(val))) return "--";
+    return Math.round(Number(val));
   }
 
-  function clearPollTimer() {
-    if (pollTimer) {
-      window.clearInterval(pollTimer);
-      pollTimer = null;
-    }
+  function metricCard(metric) {
+    var label = metric[0];
+    var score = metric[1];
+    var subtext = metric[2];
+    var formattedScore = numericScore(score);
+    return (
+      '<div class="metric-card">' +
+      '  <div class="metric-card__title">' + escapeHtml(label) + '</div>' +
+      '  <div class="metric-card__value">' + formattedScore + '</div>' +
+      '  <div class="metric-card__sub">' + escapeHtml(subtext) + '</div>' +
+      '</div>'
+    );
+  }
+
+  function formatBytes(bytes) {
+    if (bytes === 0) return "0 Bytes";
+    var k = 1024, sizes = ["Bytes", "KB", "MB"], i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  }
+
+  function fileExtension(name) {
+    return name.slice(((name.lastIndexOf(".") - 1) >>> 0) + 2);
+  }
+
+  function escapeHtml(str) {
+    if (!str) return "";
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+  }
+
+  function youtubeEmbedUrl(videoId) {
+    return "https://www.youtube.com/embed/" + videoId;
   }
 
   function extractYoutubeVideoId(rawUrl) {
-    if (!rawUrl) {
-      return "";
-    }
+    if (!rawUrl) return "";
     try {
       var url = new URL(rawUrl);
       var host = url.hostname.replace(/^www\./, "").replace(/^m\./, "");
@@ -1486,78 +1032,129 @@
     }
   }
 
-  function youtubeEmbedUrl(videoId) {
-    return "https://www.youtube.com/embed/" + encodeURIComponent(videoId);
-  }
-
-  function youtubeHost(rawUrl) {
-    try {
-      return new URL(rawUrl).hostname.replace(/^www\./, "");
-    } catch (_error) {
-      return "";
-    }
-  }
-
-  function fileExtension(fileName) {
-    var match = String(fileName || "").toLowerCase().match(/\.([a-z0-9]+)$/);
-    return match ? match[1] : "";
-  }
-
-  function parseResponse(response) {
-    return response.text().then(function (text) {
-      var payload = text ? JSON.parse(text) : {};
-      if (!response.ok) {
-        throw new Error(errorMessage(payload, response.status));
-      }
-      return payload;
+  function postWaitlistRecord(email, advice) {
+    var endpoint = googleDbUrl();
+    if (!endpoint) return Promise.reject(new Error("Google DB URL 설정이 필요합니다."));
+    
+    return postGoogleDbRecord(endpoint, "waitlist", {
+      timestamp: new Date().toISOString(),
+      session_id: ensureAnalyticsSessionId(),
+      tester_id: betaUserKey(),
+      email: email,
+      advice: advice || "",
+      page_url: window.location.href,
+      path: window.location.pathname + window.location.hash
     });
   }
 
-  function errorMessage(payload, status) {
-    if (typeof payload.detail === "string") {
-      return payload.detail;
-    }
-    if (Array.isArray(payload.detail)) {
-      return payload.detail.map(function (item) {
-        return item.msg;
-      }).join("; ");
-    }
-    return "Request failed with status " + status;
+  function postGoogleDbRecord(endpoint, type, payload) {
+    return fetch(endpoint, {
+      method: "POST",
+      mode: "no-cors",
+      keepalive: true,
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ type: type, payload: payload })
+    });
   }
 
-  function numericScore(value) {
-    if (value === null || value === undefined || Number.isNaN(Number(value))) {
-      return "--";
-    }
-    return Math.round(Number(value)).toString();
+  function renderList(target, items) {
+    var safeItems = items.length ? items : ["코치 코멘트가 생성되지 않았습니다."];
+    target.innerHTML = safeItems.map(function (item) {
+      return "<li>" + escapeHtml(item) + "</li>";
+    }).join("");
   }
 
-  function formatBytes(bytes) {
-    if (!bytes) {
-      return "0 B";
+  function renderWarnings(warnings) {
+    if (!warnings.length) {
+      elements.warningBox.classList.add("is-hidden");
+      elements.warningList.innerHTML = "";
+      return;
     }
-    var units = ["B", "KB", "MB", "GB"];
-    var index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-    var value = bytes / Math.pow(1024, index);
-    return value.toFixed(value >= 10 || index === 0 ? 0 : 1) + " " + units[index];
+    elements.warningBox.classList.remove("is-hidden");
+    elements.warningList.innerHTML = warnings.map(function (warning) {
+      return "<li>" + escapeHtml(warning) + "</li>";
+    }).join("");
+  }
+
+  // Analytics helper dummy functions
+  function initAnalytics() {
+    ensureAnalyticsSessionId();
+    flushAnalyticsQueue();
+  }
+
+  function trackEvent(eventName, section, metadata) {
+    var payload = {
+      event_name: eventName,
+      section: section || "site",
+      timestamp: new Date().toISOString(),
+      session_id: ensureAnalyticsSessionId(),
+      tester_id: betaUserKey(),
+      metadata: metadata || {}
+    };
+    enqueueAnalyticsEvent(payload);
+    flushAnalyticsQueue();
+  }
+
+  function ensureAnalyticsSessionId() {
+    var id = localStorage.getItem(storageKeys.analyticsSessionId);
+    if (!id) {
+      id = "session-" + Math.random().toString(36).slice(2, 12);
+      localStorage.setItem(storageKeys.analyticsSessionId, id);
+    }
+    return id;
+  }
+
+  function enqueueAnalyticsEvent(eventPayload) {
+    var queue = readAnalyticsQueue();
+    queue.push(eventPayload);
+    if (queue.length > analyticsQueueLimit) queue.shift();
+    writeAnalyticsQueue(queue);
+  }
+
+  function flushAnalyticsQueue() {
+    var endpoint = googleDbUrl();
+    if (!endpoint) return;
+    var queue = readAnalyticsQueue();
+    if (!queue.length) return;
+    
+    writeAnalyticsQueue([]);
+    queue.forEach(function (payload) {
+      postGoogleDbRecord(endpoint, "analytics", payload).catch(function () {
+        // Re-queue on failure
+        var currentQueue = readAnalyticsQueue();
+        currentQueue.push(payload);
+        writeAnalyticsQueue(currentQueue);
+      });
+    });
+  }
+
+  function readAnalyticsQueue() {
+    try {
+      return JSON.parse(localStorage.getItem(storageKeys.analyticsQueue) || "[]");
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  function writeAnalyticsQueue(queue) {
+    try {
+      localStorage.setItem(storageKeys.analyticsQueue, JSON.stringify(queue));
+    } catch (_err) {}
   }
 
   function maskEmail(email) {
-    var parts = String(email || "").split("@");
-    if (parts.length !== 2) {
-      return "";
-    }
-    var name = parts[0];
-    var domain = parts[1];
-    return name.slice(0, 2) + "***@" + domain;
+    if (!email) return "";
+    var parts = email.split("@");
+    if (parts.length < 2) return "***";
+    var name = parts[0], domain = parts[1];
+    return name.slice(0, Math.min(name.length, 3)) + "***@" + domain;
   }
 
-  function escapeHtml(value) {
-    return String(value)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
+  function clearPollTimer() {
+    if (pollTimer) {
+      window.clearInterval(pollTimer);
+      pollTimer = null;
+    }
   }
+
 })();

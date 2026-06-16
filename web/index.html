@@ -3,74 +3,66 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="코노프로 - 코인 노래방에서 녹음한 내 보컬을 원곡 대비, 지난 테이크 대비 자동으로 분석해드리는 보컬 성장 앱.">
+  <meta name="description" content="코노프로 - 코인 노래방 보컬 피치 분석 및 성장 관리 솔루션">
   <meta name="keywords" content="코노프로, 보컬 연습, 코인노래방, 피치 분석, 보컬 성장, 출시 알림">
   <meta name="author" content="코노프로">
   <meta property="og:title" content="코노프로 - 코인 노래방 보컬 연습 앱">
   <meta property="og:description" content="녹음만 하면 원곡 대비 피치와 지난 연습 대비 성장을 자동 분석. 출시 알림 신청 오픈.">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
-  <title>코노프로 | 코인 노래방 보컬 연습 앱</title>
+  <title>KonoPro | 코인 노래방 보컬 분석 앱</title>
 
+  <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+  
   <link rel="stylesheet" href="templatemo-frost-style.css">
 </head>
-<body>
+<body class="dark-theme">
 
-  <button class="hamburger" id="hamburger" aria-label="Toggle navigation menu" aria-expanded="false">
-    <div class="hamburger__lines">
+  <!-- Vanta background container -->
+  <div id="vanta-bg"></div>
 
-      <span></span>
-      <span></span>
-      <span></span>
+  <!-- Sticky Glassmorphic Navbar -->
+  <header class="navbar">
+    <div class="navbar__container">
+      <a href="#hero" class="navbar__logo">
+        Kono<span>Pro</span>
+      </a>
+      <nav class="navbar__menu">
+        <a href="#problem" class="navbar__link">노래방의 문제점</a>
+        <a href="#solution" class="navbar__link">해결 방법</a>
+        <a href="#analyze" class="navbar__link navbar__link--cta">데모 체험하기</a>
+      </nav>
+      <div class="navbar__actions">
+        <button class="settings-button-nav" id="settingsButton" aria-label="Settings" aria-haspopup="dialog" aria-expanded="false">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </button>
+      </div>
     </div>
-  </button>
-
-  <button class="settings-button" id="settingsButton" type="button" aria-label="Demo settings" aria-haspopup="dialog" aria-expanded="false">
-    <span aria-hidden="true">&#9881;</span>
-  </button>
-
-  <div class="sidebar-overlay" id="sidebarOverlay"></div>
-
-  <aside class="sidebar" id="sidebar" role="navigation" aria-label="Main navigation">
-    <div class="sidebar__brand">
-      <div class="sidebar__logo">KONO<span>PRO</span></div>
-    </div>
-
-    <nav class="sidebar__nav">
-      <ul>
-        <li><a href="#hero" class="active"><span class="nav-icon">&#9678;</span> KonoPro의 약속</a></li>
-        <li><a href="#problem"><span class="nav-icon">&#9888;</span> 노래방의 문제점</a></li>
-        <li><a href="#solution"><span class="nav-icon">&#9835;</span> 해결 방법</a></li>
-        <li><a href="#analyze"><span class="nav-icon">&#9654;</span> 분석 체험하기</a></li>
-      </ul>
-    </nav>
-  </aside>
+  </header>
 
   <main class="main">
 
+    <!-- Hero Section -->
     <section class="hero" id="hero">
-      <img class="hero__bg"
-           src="images/music-technology-guitar-microphone-studio-amplifier-846852-pxhere.com.jpg"
-           alt=""
-           aria-hidden="true">
-
       <div class="hero__content">
+        <div class="hero__badge reveal">Vocal Practice Reinvented</div>
         <h1 class="hero__title reveal">
           방금 부른 노래,<br><em>늘었는지 안 늘었는지 알려드릴게요.</em>
         </h1>
-        <p class="hero__subtitle reveal reveal-delay-1">
+        <p class="hero__subtitle reveal">
           코인 노래방을 내 보컬 스튜디오로. 녹음만 하면, 원곡 대비 피치와 지난 연습 대비 성장을 자동 분석합니다.
         </p>
-        <div class="hero__actions reveal reveal-delay-2">
+        <div class="hero__actions reveal">
           <a href="#analyze" class="btn btn--primary js-track-cta" data-event="click_hero_trydemo" data-section="site_hero">분석 체험하기</a>
           <a href="#problem" class="btn btn--outline js-track-cta" data-event="click_hero_scoredifference" data-section="site_hero">코노 점수와 뭐가 다를까요?</a>
         </div>
       </div>
     </section>
 
+    <!-- Problem Section -->
     <section class="section section--alt" id="problem">
       <div class="section__header reveal">
         <span class="section__label">The Problem</span>
@@ -78,41 +70,30 @@
       </div>
 
       <div class="evidence-grid">
-        <article class="evidence-card evidence-card--left reveal">
+        <article class="evidence-card reveal">
           <div class="evidence-card__icon">🎲</div>
           <div class="evidence-card__label">±랜덤</div>
           <h3 class="evidence-card__title">코노 점수는 실력을 말하지 않습니다</h3>
           <p class="evidence-card__text">최저 점수 업장 조정, 성량·박자 편향 — 95점도 실제 피치는 반만 맞을 수 있습니다.</p>
         </article>
 
-        <div class="evidence-media evidence-media--right reveal">
-          <img src="images/a_celebration_scene_in_a_cozy_coin_noraebang_karaoke_booth._a_group_of_korean.png" alt="코인 노래방에서 환호하는 그룹" loading="lazy">
-        </div>
-
-        <article class="evidence-card evidence-card--right reveal">
+        <article class="evidence-card reveal">
           <div class="evidence-card__icon">🎤</div>
           <div class="evidence-card__label">+0.3s</div>
           <h3 class="evidence-card__title">내 목소리는 뒤늦게 돌아옵니다</h3>
           <p class="evidence-card__text">리버브에 가려진 진짜 음정, 들리는 순간엔 이미 지나갔습니다.</p>
         </article>
 
-        <div class="evidence-media evidence-media--left reveal">
-          <img src="images/a_simple_clean_infographic_diagram_showing_microphone_latency._on_the_left_a.png" alt="마이크 레이턴시 인포그래픽" loading="lazy">
-        </div>
-
-        <article class="evidence-card evidence-card--left reveal">
+        <article class="evidence-card reveal">
           <div class="evidence-card__icon">💸</div>
           <div class="evidence-card__label">₩15,000/hr</div>
           <h3 class="evidence-card__title">정확한 피드백은 비쌉니다</h3>
           <p class="evidence-card__text">매일 연습 루틴엔 비현실적. 캐주얼 싱어에겐 너무 높은 문턱입니다.</p>
         </article>
-
-        <div class="evidence-media evidence-media--right reveal">
-          <img src="images/a_cozy_high_end_professional_vocal_recording_studio_at_night._warm_amber.png" alt="하이엔드 보컬 레코딩 스튜디오" loading="lazy">
-        </div>
       </div>
     </section>
 
+    <!-- Solution Section -->
     <section class="section" id="solution">
       <div class="section__header reveal">
         <span class="section__label">Core Features</span>
@@ -130,7 +111,7 @@
             </div>
           </div>
 
-          <div class="builder-step reveal reveal-delay-1" data-preview="2" tabindex="0">
+          <div class="builder-step reveal" data-preview="2" tabindex="0">
             <div class="builder-step__num">2</div>
             <div>
               <h3 class="builder-step__title">테이크 간 자동 비교</h3>
@@ -138,7 +119,7 @@
             </div>
           </div>
 
-          <div class="builder-step reveal reveal-delay-2" data-preview="3" tabindex="0">
+          <div class="builder-step reveal" data-preview="3" tabindex="0">
             <div class="builder-step__num">3</div>
             <div>
               <h3 class="builder-step__title">성장 추이 추적</h3>
@@ -147,7 +128,7 @@
           </div>
         </div>
 
-        <div class="builder__preview reveal reveal-delay-1" aria-hidden="true">
+        <div class="builder__preview reveal" aria-hidden="true">
           <div class="iphone">
             <span class="iphone__notch"></span>
             <span class="iphone__button iphone__button--power"></span>
@@ -164,306 +145,288 @@
       </div>
     </section>
 
-    <section class="service-lab" id="analyze" aria-labelledby="analyzeTitle">
-      <div class="service-lab__shell">
+    <!-- Workspace Demo Section -->
+    <section class="workspace" id="analyze" aria-labelledby="analyzeTitle">
+      <div class="workspace__shell">
         <div class="section__header reveal">
-          <span class="section__label">Try It Now</span>
+          <span class="section__label">Analysis Demo</span>
           <h2 class="section__title" id="analyzeTitle">원곡 대비 보컬 분석 체험하기</h2>
-          <p class="section__desc">유튜브 원곡 URL과 내 녹음을 올리면, 로컬 백엔드가 점수와 연습 피드백을 반환합니다.</p>
+          <p class="section__desc">유튜브 원곡 URL과 내 노래 녹음 파일을 입력하면, 실시간으로 상세 피치 및 성장을 분석합니다.</p>
         </div>
 
-        <div class="analysis-console reveal">
-          <div class="analysis-console__top">
-            <div>
-              <h3 class="analysis-console__title">Scoring Console</h3>
-              <p class="analysis-console__text">녹음 파일을 업로드한 뒤 원곡 유튜브 링크를 확인하고 분석을 시작하세요.</p>
-            </div>
-          </div>
-
-          <form class="analysis-form fake-door-form" id="analysisForm" novalidate>
-            <div class="flow-rail" aria-label="Analysis steps">
-              <span class="flow-step is-active" id="flowStepUpload">1. Upload</span>
-              <span class="flow-step" id="flowStepReference">2. Match original</span>
-              <span class="flow-step" id="flowStepAnalyze">3. Analyze</span>
-            </div>
-
-            <input id="youtubeUrl" name="youtubeUrl" type="hidden">
-
-            <section class="flow-panel upload-panel" id="uploadStage" aria-labelledby="uploadStageTitle">
-              <div class="audio-card" data-audio-card="take">
-                <div class="audio-card__header">
-                  <div>
-                    <span class="audio-card__eyebrow">Required take</span>
-                    <label class="audio-card__title" id="uploadStageTitle" for="takeAudio">Upload your cover recording.</label>
-                  </div>
-                  <span class="audio-card__badge">User</span>
-                </div>
-
-                <div class="audio-card__dropzone" data-audio-dropzone="take" role="button" tabindex="0" aria-controls="takeAudio" aria-describedby="takeFileMeta">
-                  <input class="audio-card__input" id="takeAudio" name="takeAudio" type="file" accept="audio/*" required>
-                  <div class="audio-card__wave" aria-hidden="true">
-                    <span></span><span></span><span></span><span></span><span></span><span></span>
-                  </div>
-                  <span class="audio-card__meta" id="takeFileMeta">WAV, MP3, M4A, AAC, OGG, FLAC</span>
-                  <span class="audio-card__hint">클릭하거나 드래그해서 업로드</span>
-                </div>
-
-                <div class="audio-card__player is-hidden" id="takeAudioPreview">
-                  <div class="audio-card__file">
-                    <span class="audio-card__filename" id="takeFileName">No file selected</span>
-                    <span class="audio-card__filesize" id="takeFileSize"></span>
-                  </div>
-                  <audio id="takeAudioPlayer" controls preload="metadata"></audio>
-                </div>
+        <div class="workspace__grid">
+          
+          <!-- LEFT COLUMN: Inputs Workspace -->
+          <div class="workspace__left reveal">
+            <div class="workspace__card">
+              <div class="workspace__card-header">
+                <h3 class="workspace__card-title">1. 분석 입력 정보</h3>
+                <p class="workspace__card-description">원곡 유튜브 주소와 녹음 파일을 업로드하세요.</p>
               </div>
-
-              <div class="flow-panel__actions">
-                <button class="btn btn--primary" type="submit" id="submitButton">Next</button>
-                <button class="btn btn--outline" type="button" id="clearButton">초기화</button>
-              </div>
-            </section>
-
-            <section class="flow-panel reference-confirm is-hidden" id="confirmStage" aria-labelledby="confirmTitle">
-              <div class="reference-confirm__copy">
-                <span class="section__label">Confirm Reference</span>
-                <h4 id="confirmTitle">Is this the original song you sang?</h4>
-                <p>The scoring job starts only after you confirm the matching original.</p>
-              </div>
-
-              <div class="reference-confirm__grid">
-                <div class="youtube-embed">
-                  <iframe id="confirmYoutubeEmbed" title="Original song preview" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+              
+              <form class="analysis-form" id="analysisForm" novalidate>
+                <!-- YouTube URL Input -->
+                <div class="form-group">
+                  <label for="youtubeUrl" class="form-label">YouTube 원곡 주소</label>
+                  <div class="input-with-icon">
+                    <span class="input-icon">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"></path><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"></polygon></svg>
+                    </span>
+                    <input id="youtubeUrl" name="youtubeUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." class="form-input" required>
+                  </div>
+                  <small class="form-hint">유튜브 뮤직, 일반 영상 링크 모두 사용 가능합니다.</small>
                 </div>
-                <div class="reference-card reference-card--compact">
-                  <div class="reference-card__header">
-                    <div>
-                      <span class="reference-card__eyebrow">Reference song</span>
-                      <p class="reference-card__title">YouTube URL</p>
+
+                <!-- Hidden Input for File Pickers compatibility -->
+                <input class="audio-card__input" id="takeAudio" name="takeAudio" type="file" accept="audio/*" required style="display:none;">
+
+                <!-- Drag & Drop Recording Upload Card -->
+                <div class="form-group">
+                  <label class="form-label">내 노래 녹음 파일 (Take)</label>
+                  <div class="audio-card" data-audio-card="take">
+                    <div class="audio-card__dropzone" data-audio-dropzone="take" role="button" tabindex="0" aria-controls="takeAudio" aria-describedby="takeFileMeta">
+                      <div class="audio-card__dropzone-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                      </div>
+                      <span class="audio-card__hint">이곳을 클릭하거나 녹음 파일을 드래그하여 업로드</span>
+                      <span class="audio-card__meta" id="takeFileMeta">WAV, MP3, M4A, AAC, OGG, FLAC (최대 50MB)</span>
                     </div>
-                    <span class="reference-card__badge">Original</span>
+
+                    <!-- Audio Player Preview -->
+                    <div class="audio-card__player is-hidden" id="takeAudioPreview">
+                      <div class="audio-card__file">
+                        <span class="audio-card__filename" id="takeFileName">No file selected</span>
+                        <span class="audio-card__filesize" id="takeFileSize"></span>
+                      </div>
+                      <audio id="takeAudioPlayer" controls preload="metadata"></audio>
+                    </div>
                   </div>
-                  <a class="reference-confirm__url" id="confirmYoutubeLink" href="#" target="_blank" rel="noopener">Open YouTube</a>
-                </div>
-              </div>
-
-              <div class="flow-panel__actions">
-                <button class="btn btn--primary" type="button" id="confirmAnalyzeButton">Yes, analyze</button>
-                <button class="btn btn--outline" type="button" id="changeYoutubeButton">Change URL</button>
-              </div>
-            </section>
-
-            <section class="flow-panel processing-panel is-hidden" id="processingStage" aria-labelledby="processingTitle">
-              <div class="processing-panel__top">
-                <div class="loader-ring" aria-hidden="true"></div>
-                <div>
-                  <span class="section__label">Processing</span>
-                  <h4 id="processingTitle">Analyzing your take</h4>
-                  <p id="processingHint">The backend is fetching the original song and comparing it against your recording.</p>
-                </div>
-              </div>
-
-              <div class="processing-timeline" aria-label="Analysis progress">
-                <div class="processing-timeline__current" aria-live="polite">
-                  <span>Now checking</span>
-                  <strong id="processingStepTitle">Preparing analysis</strong>
-                  <p id="processingStepText">Your upload and reference song are queued for comparison.</p>
-                </div>
-                <ol class="processing-steps" id="processingStepList"></ol>
-              </div>
-
-              <div class="question-grid" id="workflowQuestionForm" role="group" aria-labelledby="workflowQuestionTitle">
-                <div class="question-grid__header">
-                  <h4 id="workflowQuestionTitle">Quick questions while this runs</h4>
-                  <p id="questionProgress">0 of 4 answered</p>
                 </div>
 
-                <fieldset class="question-card">
-                  <legend>How would you most likely use this with karaoke?</legend>
-                  <label><input type="radio" name="karaokeUse" value="whole_session"><span>Record whole session</span></label>
-                  <label><input type="radio" name="karaokeUse" value="one_song"><span>Record one song at a time</span></label>
-                  <label><input type="radio" name="karaokeUse" value="upload_later"><span>Upload existing recording later</span></label>
-                </fieldset>
+                <!-- Submit / Control Buttons -->
+                <div class="workspace__actions">
+                  <button class="btn btn--primary btn--full" type="submit" id="submitButton">
+                    <span class="btn-text">분석 시작하기</span>
+                    <span class="btn-spinner is-hidden"></span>
+                  </button>
+                  <button class="btn btn--outline btn--full" type="button" id="clearButton">
+                    초기화
+                  </button>
+                </div>
+              </form>
 
-                <fieldset class="question-card">
-                  <legend>Where are you using this now?</legend>
-                  <label><input type="radio" name="deviceContext" value="phone"><span>Phone</span></label>
-                  <label><input type="radio" name="deviceContext" value="laptop"><span>Laptop</span></label>
-                  <label><input type="radio" name="deviceContext" value="tablet"><span>Tablet</span></label>
-                </fieldset>
-
-                <fieldset class="question-card">
-                  <legend>If this worked well, would removing the upload step make you install an app?</legend>
-                  <label><input type="radio" name="appInstall" value="yes"><span>Yes</span></label>
-                  <label><input type="radio" name="appInstall" value="no"><span>No</span></label>
-                  <label><input type="radio" name="appInstall" value="not_sure"><span>Not sure</span></label>
-                </fieldset>
-
-                <fieldset class="question-card">
-                  <legend>What would you want the result to tell you first?</legend>
-                  <label><input type="radio" name="resultPriority" value="practice_next"><span>What to practice next</span></label>
-                  <label><input type="radio" name="resultPriority" value="improved"><span>Whether I improved</span></label>
-                  <label><input type="radio" name="resultPriority" value="close_to_original"><span>How close I was to the original</span></label>
-                  <label><input type="radio" name="resultPriority" value="recording_good"><span>Whether this recording was good</span></label>
-                </fieldset>
+              <!-- Live Backend status indicator inside Left Column -->
+              <div class="job-status" id="jobStatus" role="status" aria-live="polite">
+                <span class="job-status__dot"></span>
+                <span id="jobStatusText">대기 중</span>
               </div>
 
-              <div class="result-gate is-hidden" id="resultGate" role="status" aria-live="polite">
-                Analysis is ready. Finish the quick questions to unlock your result.
-              </div>
-            </section>
-          </form>
-
-          <div class="job-status" id="jobStatus" role="status" aria-live="polite">
-            <span class="job-status__dot"></span>
-            <span id="jobStatusText">대기 중</span>
-          </div>
-        </div>
-
-        <div class="analysis-result reveal" id="result" aria-labelledby="resultTitle">
-          <div class="analysis-result__top">
-            <div>
-              <span class="section__label">Result</span>
-              <h3 class="analysis-result__title" id="resultTitle">Analysis output</h3>
             </div>
-            <div class="analysis-result__score" id="overallScore">--</div>
           </div>
 
-          <div class="analysis-result__empty" id="emptyResult">분석 결과가 여기에 표시됩니다.</div>
-
-          <div class="analysis-result__layout is-hidden" id="resultLayout">
-            <article class="result-card result-card--upload">
-              <span class="section__label">Your upload</span>
-              <h4 id="resultTakeFileName">Cover recording</h4>
-              <p id="resultTakeMeta">Selected audio appears here.</p>
-              <audio id="resultTakeAudioPlayer" controls preload="metadata"></audio>
-            </article>
-
-            <article class="result-card result-card--reference">
-              <span class="section__label">Original song</span>
-              <div class="youtube-embed youtube-embed--result">
-                <iframe id="resultYoutubeEmbed" title="Confirmed original song" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+          <!-- RIGHT COLUMN: Output Workspace -->
+          <div class="workspace__right reveal">
+            <div class="workspace__card result-workspace-card">
+              
+              <!-- State A: Empty State -->
+              <div class="analysis-result__empty" id="emptyResult">
+                <div class="empty-state-visual">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                </div>
+                <h3 class="empty-state-title">분석 결과 대기 중</h3>
+                <p class="empty-state-desc">왼쪽 패널에 유튜브 링크와 목소리 파일을 업로드한 뒤 '분석 시작하기'를 누르면 이곳에 정밀 보고서가 렌더링됩니다.</p>
               </div>
-              <a class="reference-confirm__url" id="resultYoutubeLink" href="#" target="_blank" rel="noopener">Open YouTube</a>
-            </article>
 
-            <article class="result-card result-card--scores">
-              <span class="section__label">Scores</span>
-              <div class="metric-grid" id="metricGrid"></div>
-              <div class="feedback-panel">
-                <h4>Practice feedback</h4>
-                <ul id="feedbackList"></ul>
-                <div class="warning-box is-hidden" id="warningBox">
-                  <h4>Warnings</h4>
-                  <ul id="warningList"></ul>
+              <!-- State B: Processing Timeline / Loading Progress -->
+              <div class="processing-panel is-hidden" id="processingStage" aria-labelledby="processingTitle">
+                <div class="processing-panel__header">
+                  <div class="spinner-ring"></div>
+                  <div>
+                    <h3 id="processingTitle" class="processing-panel-title">보컬 데이터 분석 중...</h3>
+                    <p id="processingHint" class="processing-panel-subtitle">서버에서 보컬 음정을 추출하고 템포를 보정하고 있습니다.</p>
+                  </div>
+                </div>
+                
+                <div class="processing-timeline" aria-label="Analysis progress">
+                  <div class="processing-timeline__current" aria-live="polite">
+                    <span class="timeline-eyebrow">현재 진행 단계</span>
+                    <strong id="processingStepTitle" class="timeline-step-title">대기열 등록 완료</strong>
+                    <p id="processingStepText" class="timeline-step-desc">업로드된 파일과 유튜브 오디오 매칭을 준비 중입니다.</p>
+                  </div>
+                  <ol class="processing-steps" id="processingStepList"></ol>
                 </div>
               </div>
-            </article>
+
+              <!-- State C: Analysis Result View -->
+              <div class="analysis-result is-hidden" id="result" aria-labelledby="resultTitle">
+                
+                <!-- Result Header / Overall Score -->
+                <div class="result-header">
+                  <div class="result-header__title-area">
+                    <span class="section__label">Analysis Report</span>
+                    <h3 class="analysis-result__title" id="resultTitle">피치 및 타이밍 분석 완료</h3>
+                  </div>
+                  <div class="result-header__score-container">
+                    <span class="score-label">전체 점수</span>
+                    <div class="analysis-result__score" id="overallScore">--</div>
+                  </div>
+                </div>
+
+                <div class="analysis-result__layout" id="resultLayout">
+                  
+                  <!-- Circular Sub-Scores Grid -->
+                  <div class="metric-grid" id="metricGrid"></div>
+
+                  <!-- A/B Audio Replay Clips: TOP 2 BAD MOMENTS -->
+                  <div class="bad-moments">
+                    <h4 class="section-subtitle">집중 개선 필요 구간 (Top 2 Moments)</h4>
+                    <p class="section-desc-small">음정이나 박자 편차가 컸던 상위 2개 핵심 구간입니다. 버튼을 눌러 내 소리와 원곡을 바로 들어보세요.</p>
+                    <div class="bad-moments__container" id="badMomentsContainer">
+                      <!-- Moments will be dynamically rendered here -->
+                    </div>
+                  </div>
+
+                  <!-- Playback elements -->
+                  <div class="result-players-grid">
+                    <article class="result-card result-card--upload">
+                      <span class="section__label">My Audio Take</span>
+                      <h4 id="resultTakeFileName" class="audio-filename">Cover recording</h4>
+                      <p id="resultTakeMeta" class="audio-meta">Selected audio appears here.</p>
+                      <audio id="resultTakeAudioPlayer" controls preload="metadata"></audio>
+                    </article>
+
+                    <article class="result-card result-card--reference">
+                      <span class="section__label">Original Reference</span>
+                      <div class="youtube-embed youtube-embed--result">
+                        <iframe id="resultYoutubeEmbed" title="Confirmed original song" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+                      </div>
+                      <a class="reference-confirm__url" id="resultYoutubeLink" href="#" target="_blank" rel="noopener">Open YouTube</a>
+                    </article>
+                  </div>
+
+                  <!-- Text Coach Feedback -->
+                  <div class="feedback-panel">
+                    <h4 class="section-subtitle">인공지능 코치 피드백</h4>
+                    <ul id="feedbackList" class="feedback-list"></ul>
+                    
+                    <div class="warning-box is-hidden" id="warningBox">
+                      <h4 class="section-subtitle text-warning">특이사항 (Warnings)</h4>
+                      <ul id="warningList" class="warning-list"></ul>
+                    </div>
+                  </div>
+
+                  <!-- Inline Email Waitlist Signup -->
+                  <div class="embedded-waitlist">
+                    <div class="embedded-waitlist__icon">🔔</div>
+                    <div class="embedded-waitlist__content">
+                      <h4>분석 결과가 마음에 드셨나요?</h4>
+                      <p>KonoPro의 모바일 앱 정식 출시 소식과 함께 첫 달 무료 코드를 보내드릴게요!</p>
+                      
+                      <form id="inlineWaitlistForm" class="inline-waitlist-form" novalidate>
+                        <div class="inline-waitlist-field">
+                          <input id="inlineEmail" name="email" type="email" placeholder="이메일 주소를 입력하세요" required class="form-input">
+                          <button type="submit" class="btn btn--primary">신청하기</button>
+                        </div>
+                        <p id="inlineFormFeedback" class="form-feedback" role="status" aria-live="polite"></p>
+                      </form>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
+            </div>
           </div>
+
         </div>
       </div>
     </section>
 
+    <!-- Bottom Promo Banner -->
     <section class="cta-banner" id="cta-bottom">
       <div class="cta-banner__content reveal">
         <h2 class="cta-banner__title">이제, 내 성장이 보일 차례</h2>
-        <p class="cta-banner__text">첫달 무료 코드와 함께 베타테스터로 참여하세요.</p>
+        <p class="cta-banner__text">첫 달 무료 코드와 함께 정식 서비스 출시 소식을 받아보세요.</p>
         <button type="button" class="btn btn--primary js-track-cta js-open-reveal" data-event="click_cta_button" data-section="site_CTA">출시 소식 이메일로 받기</button>
       </div>
     </section>
 
+    <!-- Footer -->
     <footer class="footer">
       <div class="footer__top">
         <div class="footer__brand">KONO<span>PRO</span></div>
         <p class="footer__contact">문의: singernow.studios@gmail.com</p>
       </div>
       <div class="footer__bottom">
-        <p>&copy; 2026 코노프로.</p>
+        <p>&copy; 2026 KonoPro. All Rights Reserved.</p>
       </div>
     </footer>
 
   </main>
 
+  <!-- Developer Settings Modal -->
   <div class="reveal-modal settings-modal" id="settingsModal" aria-hidden="true">
     <div class="reveal-modal__overlay" data-close-settings-modal></div>
     <div class="reveal-modal__content settings-modal__content" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <button type="button" class="reveal-modal__close" aria-label="닫기" data-close-settings-modal>&times;</button>
       <span class="section__label">Demo Settings</span>
-      <h2 class="reveal-modal__title" id="settingsTitle">분석 데모 설정</h2>
-      <p class="reveal-modal__message">로컬 베타 테스트용 연결 정보입니다. 일반 방문자는 변경하지 않아도 됩니다.</p>
+      <h2 class="reveal-modal__title" id="settingsTitle">데모 테스터 설정</h2>
+      <p class="reveal-modal__message">로컬 베타 테스트용 백엔드 주소와 테스터 키 설정입니다.</p>
 
       <div class="settings-modal__status">
         <p class="health-status" id="healthStatus" role="status" aria-live="polite">Backend: not checked</p>
-        <button class="btn btn--outline" type="button" id="healthCheckButton">Backend 확인</button>
+        <button class="btn btn--outline" type="button" id="healthCheckButton">연결 확인</button>
       </div>
 
-      <div class="fake-door-form settings-form">
-        <div class="fake-door-form__field">
+      <div class="settings-form">
+        <div class="settings-form__field">
           <label for="apiBaseUrl">Backend URL</label>
-          <input id="apiBaseUrl" name="apiBaseUrl" type="url" value="http://127.0.0.1:8000" autocomplete="url">
+          <input id="apiBaseUrl" name="apiBaseUrl" type="url" value="http://127.0.0.1:8000" autocomplete="url" class="form-input">
         </div>
 
-        <div class="fake-door-form__field">
+        <div class="settings-form__field">
           <label for="betaUserKey">Tester ID</label>
-          <input id="betaUserKey" name="betaUserKey" type="text" autocomplete="email" required>
+          <input id="betaUserKey" name="betaUserKey" type="text" autocomplete="email" required class="form-input">
         </div>
 
-        <div class="fake-door-form__field">
+        <div class="settings-form__field">
           <label for="googleDbUrl">Google DB URL</label>
-          <input id="googleDbUrl" name="googleDbUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="url">
+          <input id="googleDbUrl" name="googleDbUrl" type="url" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="url" class="form-input">
         </div>
       </div>
     </div>
   </div>
 
+  <!-- Standard Waitlist Modal (for Hero CTA click) -->
   <div class="reveal-modal" id="revealModal" aria-hidden="true">
     <div class="reveal-modal__overlay" data-close-modal></div>
     <div class="reveal-modal__content" role="dialog" aria-modal="true" aria-labelledby="revealTitle">
       <button type="button" class="reveal-modal__close" aria-label="닫기" data-close-modal>&times;</button>
-      <h2 class="reveal-modal__title" id="revealTitle">출시되면 알려드릴게요</h2>
-      <p class="reveal-modal__message">이메일을 남겨주시면 KonoPro 앱 출시 또는 베타테스트를 진행할 때 소식을 보내드릴게요.</p>
+      <h2 class="reveal-modal__title" id="revealTitle">KonoPro 출시 소식 받기</h2>
+      <p class="reveal-modal__message">이메일을 등록해 주시면 서비스 정식 출시 및 첫 달 무료 베타 테스터 등록 코드를 보내드립니다.</p>
 
-      <form id="waitlistForm" class="fake-door-form" novalidate>
-        <div class="fake-door-form__field">
-          <label for="email">이메일</label>
-          <input id="email" name="email" type="email" placeholder="you@example.com" required>
+      <form id="waitlistForm" class="modal-waitlist-form" novalidate>
+        <div class="form-group">
+          <label for="email" class="form-label">이메일 주소</label>
+          <input id="email" name="email" type="email" placeholder="you@example.com" required class="form-input">
         </div>
 
-        <div class="fake-door-form__field">
-          <label for="advice">한 마디 (선택)</label>
-          <textarea id="advice" name="advice" rows="3" placeholder="원하는 곡, 바라는 점 — 자유롭게 적어주세요"></textarea>
+        <div class="form-group">
+          <label for="advice" class="form-label">의견/남기고 싶은 말 (선택)</label>
+          <textarea id="advice" name="advice" rows="3" placeholder="자주 부르는 곡명이나 앱에 바라는 점을 입력해 주세요" class="form-input"></textarea>
         </div>
 
-        <button type="submit" class="btn btn--primary btn--full">출시 소식 받기</button>
+        <button type="submit" class="btn btn--primary btn--full">등록 신청하기</button>
         <p id="formFeedback" class="form-feedback" role="status" aria-live="polite"></p>
       </form>
     </div>
   </div>
 
-  <div class="reveal-modal youtube-url-modal" id="youtubeModal" aria-hidden="true">
-    <div class="reveal-modal__overlay" data-close-youtube-modal></div>
-    <div class="reveal-modal__content youtube-url-modal__content" role="dialog" aria-modal="true" aria-labelledby="youtubeModalTitle">
-      <button type="button" class="reveal-modal__close" aria-label="닫기" data-close-youtube-modal>&times;</button>
-      <h2 class="reveal-modal__title" id="youtubeModalTitle">Paste the original singer's YouTube URL for the same song.</h2>
-      <p class="reveal-modal__message">We will show the video first so you can confirm it before analysis starts.</p>
-
-      <form id="youtubeUrlForm" class="fake-door-form" novalidate>
-        <div class="fake-door-form__field">
-          <label for="youtubeModalUrl">YouTube URL</label>
-          <input id="youtubeModalUrl" name="youtubeModalUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." autocomplete="url" required>
-        </div>
-
-        <p class="form-feedback" id="youtubeModalError" role="status" aria-live="polite"></p>
-
-        <div class="analysis-form__actions">
-          <button type="submit" class="btn btn--primary">Preview original</button>
-          <button type="button" class="btn btn--outline" data-close-youtube-modal>Cancel</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <script src="https://code.jquery.com/jquery-latest.min.js"></script>
-  <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+  <!-- CDN scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vanta@latest/dist/vanta.net.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  
   <script src="templatemo-frost-script.js"></script>
 </body>
 </html>
