@@ -3,11 +3,12 @@ import sys
 import time
 
 from konopro_backend.config import BackendSettings
+from konopro_backend.db import create_db_and_tables, create_engine_from_settings
 from konopro_backend.jobs import run_next_job
 
 
-def run_once(settings: BackendSettings) -> bool:
-    job = run_next_job(settings)
+def run_once(settings: BackendSettings, *, engine=None) -> bool:
+    job = run_next_job(settings, engine=engine)
     if job is None:
         print("No queued jobs found.")
         return False
@@ -34,15 +35,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = BackendSettings()
+
+    # Create the engine and ensure tables once at startup (not on every poll).
+    engine = create_engine_from_settings(settings)
+    create_db_and_tables(engine)
+
     if args.once:
-        run_once(settings)
+        run_once(settings, engine=engine)
         return 0
 
     empty_polls = 0
     print("Worker polling for queued jobs. Press Ctrl+C to stop.")
     try:
         while True:
-            processed_job = run_once(settings)
+            processed_job = run_once(settings, engine=engine)
             if processed_job:
                 empty_polls = 0
                 continue

@@ -51,6 +51,7 @@ def prepare_vocal_analysis_audio(
     overlap: float = 0.25,
     jobs: int = 0,
     timeout_s: int = 1800,
+    source_hash: str | None = None,
 ) -> SeparationResult:
     """Return the audio path that should be analyzed by downstream audio tasks.
 
@@ -93,7 +94,7 @@ def prepare_vocal_analysis_audio(
         )
 
     cache_dir = Path(cache_dir)
-    cache_key = _cache_key(source_path, model=model, device=device, stem=stem, shifts=shifts, overlap=overlap)
+    cache_key = _cache_key(source_path, model=model, device=device, stem=stem, shifts=shifts, overlap=overlap, source_hash=source_hash)
     target_path = cache_dir / "demucs" / model / cache_key / f"{stem}.wav"
     fallback_path = target_path.parent / "fallback.json"
     if target_path.exists() and target_path.stat().st_size > 0:
@@ -288,11 +289,14 @@ def _store_fallback_result(
     )
 
 
-def _cache_key(path: Path, **options: object) -> str:
+def _cache_key(path: Path, *, source_hash: str | None = None, **options: object) -> str:
     hasher = hashlib.sha256()
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(1024 * 1024), b""):
-            hasher.update(chunk)
+    if source_hash:
+        hasher.update(source_hash.encode("utf-8"))
+    else:
+        with path.open("rb") as file:
+            for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                hasher.update(chunk)
     for key, value in sorted(options.items()):
         hasher.update(f"{key}={value}".encode("utf-8"))
     return hasher.hexdigest()[:20]

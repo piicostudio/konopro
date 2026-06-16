@@ -1,5 +1,6 @@
 from collections.abc import Callable
 
+from sqlalchemy.engine import Engine
 from sqlmodel import Session
 
 from konopro_backend.config import BackendSettings
@@ -27,9 +28,13 @@ def default_processor(settings: BackendSettings) -> JobProcessor:
 def run_next_job(
     settings: BackendSettings,
     processor: JobProcessor | None = None,
+    *,
+    engine: Engine | None = None,
 ) -> ProcessingJob | None:
-    engine = create_engine_from_settings(settings)
-    create_db_and_tables(engine)
+    # Reuse caller-provided engine when available to avoid repeated creation.
+    if engine is None:
+        engine = create_engine_from_settings(settings)
+        create_db_and_tables(engine)
     active_processor = processor or default_processor(settings)
 
     with Session(engine) as db:

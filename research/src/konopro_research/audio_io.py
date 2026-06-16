@@ -48,7 +48,7 @@ def load_audio(
         audio = audio[:, 0]
 
     if target_sr and sample_rate != target_sr:
-        audio = resample_linear(audio, sample_rate, target_sr)
+        audio = _resample(audio, sample_rate, target_sr)
         sample_rate = target_sr
 
     return np.asarray(audio, dtype=np.float32), int(sample_rate)
@@ -64,6 +64,23 @@ def write_wav(path: str | Path, audio: np.ndarray, sample_rate: int) -> None:
         wav.setsampwidth(2)
         wav.setframerate(sample_rate)
         wav.writeframes(pcm.tobytes())
+
+
+def _resample(audio: np.ndarray, original_sr: int, target_sr: int) -> np.ndarray:
+    """Resample audio using librosa/soxr when available, falling back to linear interp."""
+    if original_sr == target_sr:
+        return np.asarray(audio, dtype=np.float32)
+    try:
+        import librosa
+
+        return librosa.resample(
+            np.asarray(audio, dtype=np.float32),
+            orig_sr=original_sr,
+            target_sr=target_sr,
+        ).astype(np.float32)
+    except Exception:
+        pass
+    return resample_linear(audio, original_sr, target_sr)
 
 
 def resample_linear(audio: np.ndarray, original_sr: int, target_sr: int) -> np.ndarray:

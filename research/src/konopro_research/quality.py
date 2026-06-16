@@ -39,7 +39,13 @@ class BaselineQuality:
 
 
 def summarize_audio(path: str | Path) -> AudioSummary:
+    """Load audio from disk and compute a summary."""
     audio, sample_rate = load_audio(path, target_sr=22050)
+    return summarize_audio_from_array(audio, sample_rate)
+
+
+def summarize_audio_from_array(audio: np.ndarray, sample_rate: int) -> AudioSummary:
+    """Compute an audio summary from an already-loaded numpy array (avoids re-reading disk)."""
     duration = len(audio) / sample_rate if sample_rate else 0.0
     rms = float(np.sqrt(np.mean(np.asarray(audio, dtype=float) ** 2))) if len(audio) else 0.0
     peak = float(np.max(np.abs(audio))) if len(audio) else 0.0

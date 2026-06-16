@@ -45,6 +45,7 @@ def normalize_active_rms_file(
     cache_dir: str | Path,
     target_rms: float = 0.08,
     active_percentile: float = 60.0,
+    source_hash: str | None = None,
 ) -> ActiveRmsNormalizationResult:
     source = Path(source_path)
     if not source.exists():
@@ -55,6 +56,7 @@ def normalize_active_rms_file(
         cache_dir=cache_dir,
         target_rms=target_rms,
         active_percentile=active_percentile,
+        source_hash=source_hash,
     )
     metadata_path = cache_path.with_suffix(".json")
     if cache_path.exists() and metadata_path.exists():
@@ -188,10 +190,12 @@ def _active_rms_cache_path(
     cache_dir: str | Path,
     target_rms: float,
     active_percentile: float,
+    source_hash: str | None = None,
 ) -> tuple[Path, str]:
+    file_hash = source_hash or _sha256_file(source_path)
     payload = {
         "version": ACTIVE_RMS_CACHE_VERSION,
-        "source_hash": _sha256_file(source_path),
+        "source_hash": file_hash,
         "target_rms": round(float(target_rms), 5),
         "active_percentile": round(float(active_percentile), 3),
     }
@@ -203,14 +207,19 @@ def _active_rms_cache_path(
 def _frame_rms(audio: np.ndarray, *, frame_length: int, hop_length: int) -> np.ndarray:
     if audio.size == 0:
         return np.asarray([], dtype=np.float32)
-    values: list[float] = []
-    for start in range(0, max(1, audio.size - frame_length + 1), hop_length):
-        frame = audio[start : start + frame_length]
-        if frame.size:
-            values.append(_rms(frame))
-    if not values:
-        values.append(_rms(audio))
-    return np.asarray(values, dtype=np.float32)
+    n = audio.size
+    if n < frame_length:
+        return np.asarray([_rms(audio)], dtype=np.float32)
+    n_frames = 1 + (n - frame_length) // hop_length
+    if n_frames <= 0:
+        return np.asarray([_rms(audio)], dtype=np.float32)
+    # Vectorized frame RMS via stride tricks (avoids Python loop)
+    frames = np.lib.stride_tricks.as_strided(
+        audio,
+        shape=(n_frames, frame_length),
+        strides=(audio.strides[0] * hop_length, audio.strides[0]),
+    )
+    return np.sqrt(np.mean(np.square(frames), axis=1)).astype(np.float32)
 
 
 def _rms(audio: np.ndarray) -> float:

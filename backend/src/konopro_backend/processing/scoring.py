@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import concurrent.futures
+import hashlib
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -79,6 +81,15 @@ class YoutubeReferenceFetcher:
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ReferenceFetchError("YouTube URL must be a valid http(s) URL")
 
+        # Check shared download cache first (keyed by URL hash)
+        cache_dir = self.settings.processing_path / "_cache" / "youtube"
+        url_hash = hashlib.sha256(youtube_url.encode("utf-8")).hexdigest()[:16]
+        cached_dir = cache_dir / url_hash
+        cached_wav = cached_dir / "reference.wav"
+        if cached_wav.exists() and cached_wav.stat().st_size > 0:
+            return cached_wav
+
+        # Download into a temporary job-specific dir, then copy to cache
         output_dir.mkdir(parents=True, exist_ok=True)
         output_template = output_dir / "reference.%(ext)s"
         command = [
@@ -105,12 +116,21 @@ class YoutubeReferenceFetcher:
             raise ReferenceFetchError(message or "Reference download failed")
 
         wav_path = output_dir / "reference.wav"
-        if wav_path.exists():
-            return wav_path
-        matches = sorted(output_dir.glob("reference.*"))
-        if not matches:
-            raise ReferenceFetchError("Reference download finished without an audio file")
-        return matches[0]
+        if not wav_path.exists():
+            matches = sorted(output_dir.glob("reference.*"))
+            if not matches:
+                raise ReferenceFetchError("Reference download finished without an audio file")
+            wav_path = matches[0]
+
+        # Persist to shared cache for future requests
+        try:
+            cached_dir.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copyfile(wav_path, cached_wav)
+        except Exception:
+            pass  # Non-fatal — worst case we re-download next time
+
+        return wav_path
 
 
 class ReferenceScoringProcessor:
@@ -189,14 +209,39 @@ class ReferenceScoringProcessor:
             raise FileNotFoundError(f"Stored take audio file not found: {audio_session.storage_key}")
 
         reference_path = self._reference_path(scoring_run)
-        reference_audio = self._prepare_analysis_audio(reference_path, slot="reference")
-        take_audio = self._prepare_analysis_audio(take_path, slot="take")
 
+        # Compute file hashes once up-front and pass them through the pipeline
+        # to avoid redundant full-file SHA-256 reads in separation + loudness layers.
+        ref_hash = _sha256_file(reference_path)
+        # Reuse the upload-time hash when available (stored in AudioSession.sha256)
+        take_hash = audio_session.sha256 if audio_session.sha256 else _sha256_file(take_path)
+
+        # Parallelize reference + take separation (they are independent).
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            ref_future = pool.submit(
+                self._prepare_analysis_audio, reference_path, "reference", ref_hash,
+            )
+            take_future = pool.submit(
+                self._prepare_analysis_audio, take_path, "take", take_hash,
+            )
+            reference_audio = ref_future.result()
+            take_audio = take_future.result()
+
+        # Compute the separation output file hash for pitch contour caching.
+        # If separation was a no-op (used_original), reuse the source hash.
+        ref_analysis_hash = (
+            ref_hash if getattr(reference_audio.separation, "used_original", False)
+            else _sha256_file(reference_audio.analysis_path)
+        )
+
+        analysis_cache_dir = self.settings.processing_path / "_cache" / "reference_scoring"
         reference = extract_reference_audio(
             reference_audio.analysis_path,
             title="Reference song",
             pitch_kwargs=PITCH_KWARGS,
             clean_kwargs=CLEAN_KWARGS,
+            cache_dir=analysis_cache_dir,
+            source_hash=ref_analysis_hash,
         )
         score = score_take_against_reference_contour_global_offset(
             take_audio.analysis_path,
@@ -239,7 +284,9 @@ class ReferenceScoringProcessor:
             "warnings": warnings,
         }
 
-    def _prepare_analysis_audio(self, path: Path, *, slot: str) -> AnalysisAudio:
+    def _prepare_analysis_audio(
+        self, path: Path, slot: str, source_hash: str | None = None,
+    ) -> AnalysisAudio:
         analysis_cache_dir = self.settings.processing_path / "_cache" / "reference_scoring"
         separation = prepare_vocal_analysis_audio(
             path,
@@ -251,8 +298,20 @@ class ReferenceScoringProcessor:
             shifts=1,
             overlap=0.25,
             timeout_s=self.settings.reference_scoring_demucs_timeout_s,
+            source_hash=source_hash,
         )
         analysis_path = separation.analysis_path
+
+        # Compute hash of the separated output for loudness caching
+        # (reuse source hash if separation was a no-op)
+        sep_output_hash: str | None = None
+        if source_hash and getattr(separation, "used_original", False):
+            sep_output_hash = source_hash
+        elif getattr(separation, "cache_key", ""):
+            # The cache key encodes the full file hash + options, so we can
+            # derive a stable hash from it to avoid re-reading the separated file.
+            sep_output_hash = hashlib.sha256(separation.cache_key.encode("utf-8")).hexdigest()
+
         loudness: ActiveRmsNormalizationResult | None = None
         if self.settings.reference_scoring_use_active_rms:
             loudness = normalize_active_rms_file(
@@ -260,6 +319,7 @@ class ReferenceScoringProcessor:
                 cache_dir=analysis_cache_dir / slot,
                 target_rms=self.settings.reference_scoring_target_active_rms,
                 active_percentile=self.settings.reference_scoring_active_rms_percentile,
+                source_hash=sep_output_hash,
             )
             analysis_path = loudness.analysis_path
         return AnalysisAudio(
@@ -290,9 +350,22 @@ def _default_demucs_device() -> str:
     try:
         import torch
 
-        return "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
     except Exception:
-        return "cpu"
+        pass
+    return "cpu"
+
+
+def _sha256_file(path: Path) -> str:
+    """Compute SHA-256 of a file. Used once per file at the start of the pipeline."""
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _practice_feedback(score: ScoreResult) -> list[str]:
