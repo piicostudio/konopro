@@ -502,7 +502,7 @@
 
     fetch(apiBaseUrl() + "/v1/scoring-jobs", {
       method: "POST",
-      headers: { "X-Konopro-Beta-User": betaUserKey() },
+      headers: apiRequestHeaders({ "X-Konopro-Beta-User": betaUserKey() }),
       body: data
     })
       .then(parseResponse)
@@ -529,7 +529,7 @@
     clearPollTimer();
     pollTimer = window.setInterval(function () {
       fetch(apiBaseUrl() + "/v1/scoring-jobs/" + jobId, {
-        headers: { "X-Konopro-Beta-User": betaUserKey() }
+        headers: apiRequestHeaders({ "X-Konopro-Beta-User": betaUserKey() })
       })
         .then(parseResponse)
         .then(function (payload) {
@@ -930,7 +930,9 @@
   function checkHealth() {
     persistSettings();
     setHealth("연결 확인 중...", "working");
-    fetch(apiBaseUrl() + "/health")
+    fetch(apiBaseUrl() + "/health", {
+      headers: apiRequestHeaders()
+    })
       .then(parseResponse)
       .then(function (payload) {
         setHealth("백엔드 정상: " + payload.status + " (" + payload.environment + ")", "good");
@@ -1188,6 +1190,25 @@
 
   function apiBaseUrl() {
     return elements.apiBaseUrl.value.trim().replace(/\/+$/, "");
+  }
+
+  function apiRequestHeaders(extraHeaders) {
+    var headers = {};
+    if (isNgrokBackend()) {
+      headers["ngrok-skip-browser-warning"] = "true";
+    }
+    Object.keys(extraHeaders || {}).forEach(function (key) {
+      headers[key] = extraHeaders[key];
+    });
+    return headers;
+  }
+
+  function isNgrokBackend() {
+    try {
+      return new URL(apiBaseUrl()).hostname.indexOf("ngrok") !== -1;
+    } catch (_error) {
+      return false;
+    }
   }
 
   function betaUserKey() {
