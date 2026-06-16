@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from konopro_backend.models import (
@@ -60,6 +61,18 @@ class ReportRequestDetail:
     audio_session: AudioSession | None
     artifacts: list[ReportArtifact]
     events: list[ReportEvent]
+
+
+@dataclass(frozen=True)
+class QueueStatus:
+    job_id: str
+    job_type: str
+    status: JobStatus
+    queued_ahead_count: int
+    active_processing_count: int
+    people_ahead_count: int
+    queue_position: int | None
+    pending_count: int
 
 
 def _commit_refresh(db: Session, obj):
@@ -253,6 +266,74 @@ def get_next_queued_job(db: Session, job_type: str | None = None) -> ProcessingJ
         query = query.where(ProcessingJob.job_type == job_type)
     query = query.order_by(ProcessingJob.created_at.asc())
     return db.exec(query).first()
+
+
+def count_pending_jobs(db: Session, job_type: str | None = None) -> int:
+    query = select(func.count(ProcessingJob.id)).where(
+        ProcessingJob.status.in_([JobStatus.queued, JobStatus.processing])
+    )
+    if job_type is not None:
+        query = query.where(ProcessingJob.job_type == job_type)
+    return int(db.exec(query).one())
+
+
+def get_queue_status(db: Session, job: ProcessingJob) -> QueueStatus:
+    active_processing_count = _count_jobs_by_status(db, job.job_type, JobStatus.processing)
+    pending_count = count_pending_jobs(db, job.job_type)
+
+    queued_ahead_count = 0
+    people_ahead_count = 0
+    queue_position: int | None = None
+    if job.status == JobStatus.queued:
+        queued_ahead_count = _count_queued_jobs_before(db, job)
+        people_ahead_count = active_processing_count + queued_ahead_count
+        queue_position = people_ahead_count + 1
+    elif job.status == JobStatus.processing:
+        queue_position = 0
+
+    return QueueStatus(
+        job_id=job.id,
+        job_type=job.job_type,
+        status=job.status,
+        queued_ahead_count=queued_ahead_count,
+        active_processing_count=active_processing_count,
+        people_ahead_count=people_ahead_count,
+        queue_position=queue_position,
+        pending_count=pending_count,
+    )
+
+
+def queue_status_payload(status: QueueStatus) -> dict[str, Any]:
+    return {
+        "job_id": status.job_id,
+        "job_type": status.job_type,
+        "status": status.status,
+        "queued_ahead_count": status.queued_ahead_count,
+        "active_processing_count": status.active_processing_count,
+        "people_ahead_count": status.people_ahead_count,
+        "queue_position": status.queue_position,
+        "pending_count": status.pending_count,
+    }
+
+
+def _count_jobs_by_status(db: Session, job_type: str, status: JobStatus) -> int:
+    query = (
+        select(func.count(ProcessingJob.id))
+        .where(ProcessingJob.job_type == job_type)
+        .where(ProcessingJob.status == status)
+    )
+    return int(db.exec(query).one())
+
+
+def _count_queued_jobs_before(db: Session, job: ProcessingJob) -> int:
+    query = (
+        select(func.count(ProcessingJob.id))
+        .where(ProcessingJob.job_type == job.job_type)
+        .where(ProcessingJob.status == JobStatus.queued)
+        .where(ProcessingJob.id != job.id)
+        .where(ProcessingJob.created_at < job.created_at)
+    )
+    return int(db.exec(query).one())
 
 
 def update_job_status(

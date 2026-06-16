@@ -303,6 +303,35 @@ body[data-theme="dark"] .navbar__link--cta {
   gap: 10px;
 }
 
+.presence-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid rgba(206, 95, 39, 0.2);
+  border-radius: var(--radius-sm);
+  background: rgba(206, 95, 39, 0.08);
+  color: #6a554d;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.presence-pill__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--text-success);
+  box-shadow: 0 0 0 4px rgba(40, 167, 69, 0.12);
+}
+
+body[data-theme="dark"] .presence-pill {
+  border-color: rgba(255, 64, 129, 0.2);
+  background: rgba(255, 64, 129, 0.08);
+  color: var(--text-muted);
+}
+
 .navbar__menu-toggle {
   display: none;
   align-items: center;
@@ -3065,6 +3094,11 @@ body[data-theme="dark"] .reveal-modal__overlay {
     gap: 8px;
   }
 
+  .presence-pill {
+    padding: 0 9px;
+    font-size: 0.74rem;
+  }
+
   .navbar__menu-toggle {
     display: flex;
   }
@@ -3109,7 +3143,7 @@ body[data-theme="dark"] .reveal-modal__overlay {
   body[data-theme="dark"] .navbar__link {
     color: var(--text-main);
   }
-  
+
   .section {
     padding: 60px 24px;
   }
@@ -3184,6 +3218,10 @@ body[data-theme="dark"] .reveal-modal__overlay {
 
   .metric-grid {
     grid-template-columns: 1fr;
+  }
+
+  .presence-pill span:last-child {
+    display: none;
   }
   
   .inline-waitlist-field {

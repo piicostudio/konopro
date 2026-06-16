@@ -1,9 +1,12 @@
+from threading import Lock
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from konopro_backend.api.admin_reports import router as admin_reports_router
 from konopro_backend.api.analysis import router as analysis_router
 from konopro_backend.api.jobs import router as jobs_router
+from konopro_backend.api.presence import router as presence_router
 from konopro_backend.api.reports import router as reports_router
 from konopro_backend.api.scoring import router as scoring_router
 from konopro_backend.api.sessions import router as sessions_router
@@ -18,6 +21,8 @@ def create_app(settings: BackendSettings | None = None) -> FastAPI:
     app.state.settings = app_settings
     app.state.engine = create_engine_from_settings(app_settings)
     app.state.storage = LocalAudioStorage(app_settings.storage_root)
+    app.state.presence_visitors = {}
+    app.state.presence_lock = Lock()
     create_db_and_tables(app.state.engine)
     app.add_middleware(
         CORSMiddleware,
@@ -32,6 +37,7 @@ def create_app(settings: BackendSettings | None = None) -> FastAPI:
         return {"status": "ok", "environment": app_settings.environment}
 
     app.include_router(sessions_router)
+    app.include_router(presence_router)
     app.include_router(scoring_router)
     app.include_router(jobs_router)
     app.include_router(analysis_router)

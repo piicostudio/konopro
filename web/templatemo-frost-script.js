@@ -3,6 +3,7 @@
 
   var elements = {};
   var pollTimer = null;
+  var presenceTimer = null;
   var processingStageTimer = null;
   var processingStageIndex = 0;
   var activeSessionId = null;
@@ -20,6 +21,7 @@
     betaUserKey: "konopro.betaUserKey",
     googleDbUrl: "konopro.googleDbUrl",
     showDeveloperWarnings: "konopro.showDeveloperWarnings",
+    presenceVisitorId: "konopro.presenceVisitorId",
     theme: "konopro.theme",
     analyticsSessionId: "konopro.analyticsSessionId",
     analyticsQueue: "konopro.analyticsQueue"
@@ -49,6 +51,7 @@
     initTheme();
     initVantaBackground();
     initStoredSettings();
+    initPresenceHeartbeat();
     initLandingInteractions();
     initScoringConsole();
     initResultDetailCarousel();
@@ -68,6 +71,8 @@
       formFeedback: document.getElementById("formFeedback"),
       healthCheckButton: document.getElementById("healthCheckButton"),
       healthStatus: document.getElementById("healthStatus"),
+      presencePill: document.getElementById("presencePill"),
+      presenceCount: document.getElementById("presenceCount"),
       apiBaseUrl: document.getElementById("apiBaseUrl"),
       betaUserKey: document.getElementById("betaUserKey"),
       googleDbUrl: document.getElementById("googleDbUrl"),
@@ -124,6 +129,7 @@
       analysisReady: false,
       analysisFailed: false,
       questionsComplete: true, // Auto bypass survey
+      processingMode: "idle",
       resultRendered: false
     };
   }
@@ -142,6 +148,40 @@
       elements.showDeveloperWarnings.checked = localStorage.getItem(storageKeys.showDeveloperWarnings) === "true";
     }
     persistSettings();
+  }
+
+  function initPresenceHeartbeat() {
+    if (!elements.presenceCount) return;
+    sendPresenceHeartbeat();
+    presenceTimer = window.setInterval(sendPresenceHeartbeat, 30000);
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) sendPresenceHeartbeat();
+    });
+  }
+
+  function sendPresenceHeartbeat() {
+    if (!elements.presenceCount || document.hidden) return;
+    fetch(apiBaseUrl() + "/v1/presence/heartbeat", {
+      method: "POST",
+      headers: apiRequestHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        visitor_id: presenceVisitorId(),
+        path: window.location.pathname + window.location.hash
+      })
+    })
+      .then(parseResponse)
+      .then(function (payload) {
+        elements.presenceCount.textContent = String(payload.active_visitor_count || 1);
+        if (elements.presencePill) {
+          elements.presencePill.dataset.state = "live";
+        }
+      })
+      .catch(function () {
+        elements.presenceCount.textContent = "--";
+        if (elements.presencePill) {
+          elements.presencePill.dataset.state = "offline";
+        }
+      });
   }
 
   function initVantaBackground() {
@@ -483,6 +523,7 @@
     flowState.analysisFailed = false;
     flowState.scoringRun = null;
     flowState.resultRendered = false;
+    flowState.processingMode = "starting";
 
     // Start UI processing stage
     transitionRightColumn("processing");
@@ -508,7 +549,7 @@
       .then(parseResponse)
       .then(function (payload) {
         activeSessionId = payload.session.id;
-        setJobStatus(statusText(payload), "working");
+        updateProcessingQueueState(payload);
         pollScoringJob(payload.job.id);
       })
       .catch(function (error) {
@@ -571,7 +612,7 @@
             return;
           }
           
-          setJobStatus(statusText(payload), "working");
+          updateProcessingQueueState(payload);
         })
         .catch(function (error) {
           clearPollTimer();
@@ -581,6 +622,43 @@
           flowState.analysisFailed = true;
         });
     }, 2000);
+  }
+
+  function updateProcessingQueueState(payload) {
+    var queue = payload.queue || {};
+    var status = payload.job && payload.job.status;
+    var peopleAhead = Number(queue.people_ahead_count || 0);
+
+    if (status === "queued") {
+      if (flowState.processingMode !== "queued") {
+        clearProcessingStageTimer();
+        setProcessingStage(0, "active");
+        flowState.processingMode = "queued";
+      }
+      elements.processingStepTitle.textContent = peopleAhead > 0
+        ? "대기열에서 기다리는 중"
+        : "곧 분석을 시작합니다";
+      elements.processingStepText.textContent = peopleAhead > 0
+        ? "앞에 " + peopleAhead + "명이 분석을 기다리고 있어요. 순서가 오면 자동으로 시작됩니다."
+        : "현재 앞 순서가 없습니다. 서버가 준비되는 대로 바로 분석을 시작합니다.";
+      elements.processingHint.textContent = queue.pending_count > 1
+        ? "현재 대기/분석 중인 요청 " + queue.pending_count + "개"
+        : "대기열에 등록되었습니다.";
+      setJobStatus(statusText(payload), "working");
+      return;
+    }
+
+    if (status === "processing") {
+      if (flowState.processingMode !== "processing") {
+        startProcessingNarrative();
+        flowState.processingMode = "processing";
+      }
+      elements.processingHint.textContent = "지금 내 녹음을 분석하고 있어요.";
+      setJobStatus(statusText(payload), "working");
+      return;
+    }
+
+    setJobStatus(statusText(payload), "working");
   }
 
   function renderResult(scoringRun) {
@@ -1082,11 +1160,13 @@
 
   function completeProcessingNarrative() {
     clearProcessingStageTimer();
+    flowState.processingMode = "done";
     setProcessingStage(processingStages.length - 1, "done");
   }
 
   function failProcessingNarrative(message) {
     clearProcessingStageTimer();
+    flowState.processingMode = "failed";
     setProcessingStage(processingStageIndex, "failed");
     elements.processingStepTitle.textContent = "분석이 중단되었습니다.";
     elements.processingStepText.textContent = message || "오류가 발생하여 피치 분석을 마칠 수 없습니다.";
@@ -1246,12 +1326,30 @@
   }
 
   function statusText(payload) {
-    var source = payload.scoring_run.reference_source === "upload" ? "uploaded reference" : "YouTube reference";
+    var source = payload.scoring_run.reference_source === "upload" ? "업로드 원곡" : "유튜브 원곡";
+    var queue = payload.queue || {};
+    var peopleAhead = Number(queue.people_ahead_count || 0);
+    if (payload.job.status === "queued") {
+      return peopleAhead > 0
+        ? "대기 중 · 앞에 " + peopleAhead + "명 · " + source
+        : "대기 중 · 다음 순서 · " + source;
+    }
+    if (payload.job.status === "processing") {
+      return "분석 중 · " + source;
+    }
     return payload.job.status + " · " + payload.scoring_run.status + " · " + source;
   }
 
   function defaultTesterId() {
     return "tester-" + Math.random().toString(36).slice(2, 8);
+  }
+
+  function presenceVisitorId() {
+    var existing = localStorage.getItem(storageKeys.presenceVisitorId);
+    if (existing) return existing;
+    var created = "visitor-" + Math.random().toString(36).slice(2, 12);
+    localStorage.setItem(storageKeys.presenceVisitorId, created);
+    return created;
   }
 
   function parseResponse(response) {

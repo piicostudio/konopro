@@ -34,6 +34,28 @@ class ProcessingJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class QueueStatusResponse(BaseModel):
+    job_id: str
+    job_type: str
+    status: JobStatus
+    queued_ahead_count: int
+    active_processing_count: int
+    people_ahead_count: int
+    queue_position: int | None
+    pending_count: int
+
+
+class PresenceHeartbeatRequest(BaseModel):
+    visitor_id: str = PydanticField(min_length=8, max_length=128)
+    path: str | None = PydanticField(default=None, max_length=256)
+
+
+class PresenceHeartbeatResponse(BaseModel):
+    visitor_id: str
+    active_visitor_count: int
+    active_window_s: int
+
+
 class AudioSessionResponse(BaseModel):
     id: str
     user_id: str
@@ -80,6 +102,7 @@ class ScoringJobResponse(BaseModel):
     session: AudioSessionResponse
     job: ProcessingJobResponse
     scoring_run: ReferenceScoringRunResponse
+    queue: QueueStatusResponse
 
 
 class FingerprintWindowResponse(BaseModel):

@@ -50,6 +50,8 @@ class BackendSettings(BaseSettings):
     reference_scoring_use_active_rms: bool = True
     reference_scoring_target_active_rms: float = 0.08
     reference_scoring_active_rms_percentile: float = 60.0
+    reference_scoring_max_pending_jobs: int = 10
+    presence_active_window_s: int = 90
 
     model_config = SettingsConfigDict(
         env_file=".env",

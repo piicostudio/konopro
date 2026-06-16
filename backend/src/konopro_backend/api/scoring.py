@@ -7,13 +7,16 @@ from konopro_backend.config import BackendSettings
 from konopro_backend.dependencies import get_beta_user_key, get_db, get_settings, get_storage
 from konopro_backend.models import AudioSession, ProcessingJob, ReferenceScoringRun
 from konopro_backend.repositories import (
+    count_pending_jobs,
     create_audio_session,
     create_processing_job,
     create_reference_scoring_run,
     get_audio_session,
     get_or_create_beta_user,
     get_processing_job,
+    get_queue_status,
     get_reference_scoring_run_by_job,
+    queue_status_payload,
     reference_scoring_run_payload,
 )
 from konopro_backend.schemas import ReferenceScoringRunResponse, ScoringJobResponse
@@ -35,6 +38,11 @@ def create_scoring_job(
     normalized_youtube_url = youtube_url.strip()
     if not normalized_youtube_url:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="YouTube URL is required")
+    if count_pending_jobs(db, "reference_scoring") >= settings.reference_scoring_max_pending_jobs:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="현재 체험 대기열이 가득 찼어요. 잠시 후 다시 시도해주세요.",
+        )
 
     stored_take = _store_upload(take_audio, storage, settings)
     stored_reference: StoredAudio | None = None
@@ -85,7 +93,7 @@ def create_scoring_job(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Scoring job was created but metadata could not be loaded",
         )
-    return _response(refreshed_session, refreshed_job, refreshed_run)
+    return _response(db, refreshed_session, refreshed_job, refreshed_run)
 
 
 @router.get("/{job_id}", response_model=ScoringJobResponse)
@@ -95,7 +103,7 @@ def get_scoring_job(
     db: Session = Depends(get_db),
 ) -> ScoringJobResponse:
     audio_session, job, scoring_run = _load_owned_scoring_job(db, beta_user_key, job_id)
-    return _response(audio_session, job, scoring_run)
+    return _response(db, audio_session, job, scoring_run)
 
 
 @router.get("/{job_id}/result", response_model=ReferenceScoringRunResponse)
@@ -141,6 +149,7 @@ def _load_owned_scoring_job(
 
 
 def _response(
+    db: Session,
     audio_session: AudioSession,
     job: ProcessingJob,
     scoring_run: ReferenceScoringRun,
@@ -149,4 +158,5 @@ def _response(
         session=audio_session,
         job=job,
         scoring_run=ReferenceScoringRunResponse(**reference_scoring_run_payload(scoring_run)),
+        queue=queue_status_payload(get_queue_status(db, job)),
     )
