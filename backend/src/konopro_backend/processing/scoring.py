@@ -381,23 +381,55 @@ def _sha256_file(path: Path) -> str:
 
 
 def _practice_feedback(score: ScoreResult) -> list[str]:
-    feedback: list[str] = []
-    if score.overall_score >= 80:
-        feedback.append("Strong take overall. Use this as a reference point for later attempts.")
-    elif score.overall_score >= 60:
-        feedback.append("Usable practice take. Focus on the lowest metric first before re-recording.")
-    else:
-        feedback.append("Treat this as a diagnostic take. Re-record a shorter, cleaner section if needed.")
+    candidates: list[tuple[float, str]] = []
 
     if score.pitch_accuracy_score < 70:
-        feedback.append("Pitch contour is the main gap. Practice the melody slowly before singing full tempo.")
-    if score.timing_score < 70:
-        feedback.append("Timing alignment is weak. Trim the take/reference to the same phrase and retry.")
+        candidates.append(
+            (
+                score.pitch_accuracy_score,
+                (
+                    "음정 흐름이 원곡과 가장 많이 달라요. "
+                    f"평균 음정 오차는 약 {score.mean_pitch_error_cents:.0f} cents입니다. "
+                    "멜로디를 천천히 맞춘 뒤 전체 속도로 불러보세요."
+                ),
+            )
+        )
     if score.stability_score < 70:
-        feedback.append("Pitch stability is low. Hold longer notes steadily before adding style or vibrato.")
+        candidates.append(
+            (
+                score.stability_score,
+                (
+                    "긴 음에서 흔들림이 보여요. "
+                    f"음정 흔들림은 약 {score.pitch_stability_cents:.0f} cents입니다. "
+                    "비브라토나 스타일을 넣기 전에 한 음을 안정적으로 유지해보세요."
+                ),
+            )
+        )
+    if score.timing_score < 70:
+        timing_ms = abs(score.timing_offset_s) * 1000.0
+        candidates.append(
+            (
+                score.timing_score,
+                (
+                    "박자가 원곡과 어긋나요. "
+                    f"평균 타이밍 차이는 약 {timing_ms:.0f}ms입니다. "
+                    "같은 구간을 짧게 잘라 다시 맞춰보세요."
+                ),
+            )
+        )
     if score.coverage_score < 70:
-        feedback.append("Detected singing coverage is low. Sing through more of the reference phrase.")
-    if score.recording_confidence_level == "low":
-        feedback.append("Recording confidence is low, so use this score as rough feedback only.")
+        candidates.append(
+            (
+                score.coverage_score,
+                (
+                    "부른 구간이 원곡을 충분히 커버하지 못했어요. "
+                    f"비교 가능한 보컬 구간은 약 {score.note_coverage_pct:.0f}%입니다. "
+                    "원곡과 같은 구간을 끝까지 불러보세요."
+                ),
+            )
+        )
 
-    return feedback[:5]
+    if not candidates:
+        return ["전체 흐름은 안정적이에요. 문제 구간 2개를 다시 들으며 작은 음정 차이를 줄여보세요."]
+
+    return [message for _score, message in sorted(candidates, key=lambda item: item[0])[:2]]

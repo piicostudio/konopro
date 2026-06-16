@@ -1072,7 +1072,13 @@
   }
 
   function renderFeedbackSlide(feedback) {
-    var safeItems = feedback.length ? feedback : ["이번 결과에서 가장 낮은 항목부터 한 구간씩 다시 들어보세요."];
+    var safeItems = (feedback || [])
+      .map(normalizeCoachFeedback)
+      .filter(Boolean)
+      .slice(0, 2);
+    if (!safeItems.length) {
+      safeItems = ["이번 결과에서 가장 낮은 항목부터 한 구간씩 다시 들어보세요."];
+    }
     return (
       '<article class="result-detail-card result-detail-card--feedback">' +
         '<ul class="feedback-list">' +
@@ -1082,6 +1088,26 @@
         '</ul>' +
       '</article>'
     );
+  }
+
+  function normalizeCoachFeedback(item) {
+    var text = String(item || "").trim();
+    if (!text) return "";
+    var translations = {
+      "Treat this as a diagnostic take. Re-record a shorter, cleaner section if needed.": "",
+      "Strong take overall. Use this as a reference point for later attempts.": "",
+      "Usable practice take. Focus on the lowest metric first before re-recording.": "",
+      "Pitch contour is the main gap. Practice the melody slowly before singing full tempo.":
+        "음정 흐름이 원곡과 가장 많이 달라요. 멜로디를 천천히 맞춘 뒤 전체 속도로 불러보세요.",
+      "Pitch stability is low. Hold longer notes steadily before adding style or vibrato.":
+        "긴 음에서 흔들림이 보여요. 비브라토나 스타일을 넣기 전에 한 음을 안정적으로 유지해보세요.",
+      "Timing alignment is weak. Trim the take/reference to the same phrase and retry.":
+        "박자가 원곡과 어긋나요. 같은 구간을 짧게 잘라 다시 맞춰보세요.",
+      "Detected singing coverage is low. Sing through more of the reference phrase.":
+        "부른 구간이 원곡을 충분히 커버하지 못했어요. 원곡과 같은 구간을 끝까지 불러보세요.",
+      "Recording confidence is low, so use this score as rough feedback only.": ""
+    };
+    return Object.prototype.hasOwnProperty.call(translations, text) ? translations[text] : text;
   }
 
   function renderWarningSlide(warnings) {

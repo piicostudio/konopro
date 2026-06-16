@@ -11,6 +11,7 @@ from konopro_backend.processing.scoring import (
     ReferenceFetchError,
     ReferenceScoringProcessor,
     YoutubeReferenceFetcher,
+    _practice_feedback,
 )
 from konopro_backend.repositories import (
     create_audio_session,
@@ -151,6 +152,10 @@ def test_reference_scoring_processor_uses_finalized_scoring_configuration(tmp_pa
             timing_score=90.6,
             stability_score=56.3,
             coverage_score=74.31,
+            mean_pitch_error_cents=74.94,
+            pitch_stability_cents=218.5,
+            note_coverage_pct=74.31,
+            timing_offset_s=0.12,
             recording_confidence_level="high",
             warnings=(),
             to_dict=lambda: {
@@ -159,6 +164,10 @@ def test_reference_scoring_processor_uses_finalized_scoring_configuration(tmp_pa
                 "timing_score": 90.6,
                 "stability_score": 56.3,
                 "coverage_score": 74.31,
+                "mean_pitch_error_cents": 74.94,
+                "pitch_stability_cents": 218.5,
+                "note_coverage_pct": 74.31,
+                "timing_offset_s": 0.12,
                 "recording_confidence_level": "high",
             },
         )
@@ -207,6 +216,32 @@ def test_reference_scoring_processor_uses_finalized_scoring_configuration(tmp_pa
     assert score_call["pitch_error_penalty"] == 0.70
     assert score_call["dtw_band_radius"] == 0.06
     assert score_call["max_dtw_frames"] == 2400
+
+
+def test_practice_feedback_returns_korean_top_two_items():
+    score = SimpleNamespace(
+        pitch_accuracy_score=47.54,
+        stability_score=56.3,
+        timing_score=90.6,
+        coverage_score=74.31,
+        mean_pitch_error_cents=74.94,
+        pitch_stability_cents=218.5,
+        timing_offset_s=0.12,
+        note_coverage_pct=74.31,
+    )
+
+    feedback = _practice_feedback(score)
+
+    assert feedback == [
+        (
+            "음정 흐름이 원곡과 가장 많이 달라요. 평균 음정 오차는 약 75 cents입니다. "
+            "멜로디를 천천히 맞춘 뒤 전체 속도로 불러보세요."
+        ),
+        (
+            "긴 음에서 흔들림이 보여요. 음정 흔들림은 약 218 cents입니다. "
+            "비브라토나 스타일을 넣기 전에 한 음을 안정적으로 유지해보세요."
+        ),
+    ]
 
 
 def test_youtube_reference_fetcher_uses_python_module_for_default_yt_dlp(
