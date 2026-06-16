@@ -1,12 +1,17 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from sqlmodel import Session
 
 from konopro_backend.config import BackendSettings
 from konopro_backend.db import create_db_and_tables, create_engine_from_settings
 from konopro_backend.models import JobStatus, SessionStatus
-from konopro_backend.processing.scoring import ReferenceScoringProcessor
+from konopro_backend.processing.scoring import (
+    ReferenceFetchError,
+    ReferenceScoringProcessor,
+    YoutubeReferenceFetcher,
+)
 from konopro_backend.repositories import (
     create_audio_session,
     create_processing_job,
@@ -202,6 +207,54 @@ def test_reference_scoring_processor_uses_finalized_scoring_configuration(tmp_pa
     assert score_call["pitch_error_penalty"] == 0.70
     assert score_call["dtw_band_radius"] == 0.06
     assert score_call["max_dtw_frames"] == 2400
+
+
+def test_youtube_reference_fetcher_uses_python_module_for_default_yt_dlp(
+    tmp_path, monkeypatch
+):
+    import sys
+    import konopro_backend.processing.scoring as scoring_module
+
+    settings = _settings(tmp_path)
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        output_path = tmp_path / "processing" / "job" / "reference.wav"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"fake wav")
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+    monkeypatch.setattr(scoring_module.subprocess, "run", fake_run)
+
+    path = YoutubeReferenceFetcher(settings).fetch(
+        "https://www.youtube.com/watch?v=demo",
+        tmp_path / "processing" / "job",
+    )
+
+    assert path.exists()
+    assert commands
+    assert commands[0][:3] == [sys.executable, "-m", "yt_dlp"]
+
+
+def test_youtube_reference_fetcher_reports_missing_custom_download_tool(
+    tmp_path, monkeypatch
+):
+    import konopro_backend.processing.scoring as scoring_module
+
+    settings = _settings(tmp_path)
+    settings.reference_download_tool = "missing-yt-dlp"
+
+    def fake_run(_command, **_kwargs):
+        raise FileNotFoundError("missing-yt-dlp")
+
+    monkeypatch.setattr(scoring_module.subprocess, "run", fake_run)
+
+    with pytest.raises(ReferenceFetchError, match="Reference download tool was not found"):
+        YoutubeReferenceFetcher(settings).fetch(
+            "https://www.youtube.com/watch?v=demo",
+            tmp_path / "processing" / "job",
+        )
 
 
 class FakeReferenceScoringProcessor:

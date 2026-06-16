@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import hashlib
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -93,7 +94,7 @@ class YoutubeReferenceFetcher:
         output_dir.mkdir(parents=True, exist_ok=True)
         output_template = output_dir / "reference.%(ext)s"
         command = [
-            self.settings.reference_download_tool,
+            *self._download_tool_command(),
             "--no-playlist",
             "--extract-audio",
             "--audio-format",
@@ -104,13 +105,19 @@ class YoutubeReferenceFetcher:
             str(output_template),
             youtube_url,
         ]
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=float(self.settings.reference_fetch_timeout_s),
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=float(self.settings.reference_fetch_timeout_s),
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise ReferenceFetchError(
+                "Reference download tool was not found. Install backend dependencies with "
+                "`uv sync` or set KONOPRO_REFERENCE_DOWNLOAD_TOOL to a valid yt-dlp executable."
+            ) from exc
         if completed.returncode != 0:
             message = (completed.stderr or completed.stdout or "").strip()
             raise ReferenceFetchError(message or "Reference download failed")
@@ -131,6 +138,11 @@ class YoutubeReferenceFetcher:
             pass  # Non-fatal — worst case we re-download next time
 
         return wav_path
+
+    def _download_tool_command(self) -> list[str]:
+        if self.settings.reference_download_tool == "yt-dlp":
+            return [sys.executable, "-m", "yt_dlp"]
+        return [self.settings.reference_download_tool]
 
 
 class ReferenceScoringProcessor:
