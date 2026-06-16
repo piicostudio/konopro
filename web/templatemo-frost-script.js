@@ -15,6 +15,7 @@
     take: null
   };
   
+  var defaultApiBaseUrl = "https://jockstrap-passion-obtrusive.ngrok-free.dev";
   var defaultGoogleDbUrl = "https://script.google.com/macros/s/AKfycbw2aSa60f7B-wMBQlspwdNHi8w2iHTQ-tLouwVdMP7ddPomE_TYBPcM1iNQgRHpeLyoYw/exec";
   var storageKeys = {
     apiBaseUrl: "konopro.apiBaseUrl",
@@ -137,7 +138,7 @@
 
   function initStoredSettings() {
     if (elements.apiBaseUrl) {
-      elements.apiBaseUrl.value = localStorage.getItem(storageKeys.apiBaseUrl) || "http://127.0.0.1:8000";
+      elements.apiBaseUrl.value = localStorage.getItem(storageKeys.apiBaseUrl) || defaultApiBaseUrl;
     }
     if (elements.betaUserKey) {
       elements.betaUserKey.value = localStorage.getItem(storageKeys.betaUserKey) || defaultTesterId();
@@ -1215,7 +1216,7 @@
     setBusy(false);
     elements.analysisForm.reset();
     
-    elements.apiBaseUrl.value = localStorage.getItem(storageKeys.apiBaseUrl) || "http://127.0.0.1:8000";
+    elements.apiBaseUrl.value = localStorage.getItem(storageKeys.apiBaseUrl) || defaultApiBaseUrl;
     elements.betaUserKey.value = localStorage.getItem(storageKeys.betaUserKey) || defaultTesterId();
     elements.googleDbUrl.value = localStorage.getItem(storageKeys.googleDbUrl) || defaultGoogleDbUrl;
     elements.youtubeUrl.value = "";
