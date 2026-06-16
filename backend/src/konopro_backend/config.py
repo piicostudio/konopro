@@ -4,6 +4,18 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+DEFAULT_CORS_ALLOW_ORIGINS = (
+    "http://127.0.0.1:5173,"
+    "http://localhost:5173,"
+    "http://127.0.0.1:5500,"
+    "http://localhost:5500,"
+    "http://127.0.0.1:8765,"
+    "http://localhost:8765,"
+    "http://127.0.0.1:8000,"
+    "http://localhost:8000"
+)
+
+
 class BackendSettings(BaseSettings):
     """Runtime settings for the Konopro backend."""
 
@@ -27,16 +39,8 @@ class BackendSettings(BaseSettings):
     free_report_turnaround_hours: int = 72
     paid_report_turnaround_hours: int = 24
     manual_comp_report_turnaround_hours: int = 48
-    cors_allow_origins: str = (
-        "http://127.0.0.1:5173,"
-        "http://localhost:5173,"
-        "http://127.0.0.1:5500,"
-        "http://localhost:5500,"
-        "http://127.0.0.1:8765,"
-        "http://localhost:8765,"
-        "http://127.0.0.1:8000,"
-        "http://localhost:8000"
-    )
+    cors_allow_origins: str = DEFAULT_CORS_ALLOW_ORIGINS
+    cors_allow_all_in_local: bool = True
     reference_download_tool: str = "yt-dlp"
     reference_fetch_timeout_s: float = 180.0
     reference_scoring_use_demucs: bool = True
@@ -63,4 +67,10 @@ class BackendSettings(BaseSettings):
 
     @property
     def cors_origins(self) -> list[str]:
+        if (
+            self.environment == "local"
+            and self.cors_allow_all_in_local
+            and self.cors_allow_origins == DEFAULT_CORS_ALLOW_ORIGINS
+        ):
+            return ["*"]
         return [origin.strip() for origin in self.cors_allow_origins.split(",") if origin.strip()]

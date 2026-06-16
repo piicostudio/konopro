@@ -1,4 +1,4 @@
-# Konopro 로컬 실행 가이드
+# KonoPro local 실행 가이드
 
 Konopro는 유튜브 원곡과 내 노래 녹음 파일을 비교해 보컬 점수, 문제 구간, 코치 피드백을 보여주는 로컬 웹 MVP입니다.
 
@@ -114,3 +114,13 @@ lsof -i :8765
 1. 백엔드 API를 재시작합니다.
 2. 워커를 재시작합니다.
 3. 브라우저를 강력 새로고침합니다.
+
+## 이상 코드 실행 방법이었습니다. 감사합니다!!
+
+### SWAI Timeline (5월~6월)
+```text
+Week 0: Brainstorm required features, research
+Week 1: Validate feasibility of prototype 
+Week 2: Improve scoring, alignment, and feedback
+Week 3: Build the MVP (frontend)
+Week 4: Test the MVP; deploy. Prepare for final presentations.
