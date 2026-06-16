@@ -277,8 +277,15 @@ def count_pending_jobs(db: Session, job_type: str | None = None) -> int:
     return int(db.exec(query).one())
 
 
+def count_jobs_by_status(db: Session, status: JobStatus, job_type: str | None = None) -> int:
+    query = select(func.count(ProcessingJob.id)).where(ProcessingJob.status == status)
+    if job_type is not None:
+        query = query.where(ProcessingJob.job_type == job_type)
+    return int(db.exec(query).one())
+
+
 def get_queue_status(db: Session, job: ProcessingJob) -> QueueStatus:
-    active_processing_count = _count_jobs_by_status(db, job.job_type, JobStatus.processing)
+    active_processing_count = count_jobs_by_status(db, JobStatus.processing, job.job_type)
     pending_count = count_pending_jobs(db, job.job_type)
 
     queued_ahead_count = 0
@@ -314,15 +321,6 @@ def queue_status_payload(status: QueueStatus) -> dict[str, Any]:
         "queue_position": status.queue_position,
         "pending_count": status.pending_count,
     }
-
-
-def _count_jobs_by_status(db: Session, job_type: str, status: JobStatus) -> int:
-    query = (
-        select(func.count(ProcessingJob.id))
-        .where(ProcessingJob.job_type == job_type)
-        .where(ProcessingJob.status == status)
-    )
-    return int(db.exec(query).one())
 
 
 def _count_queued_jobs_before(db: Session, job: ProcessingJob) -> int:

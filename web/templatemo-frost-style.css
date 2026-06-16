@@ -318,6 +318,18 @@ body[data-theme="dark"] .navbar__link--cta {
   white-space: nowrap;
 }
 
+.presence-pill__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.presence-pill__divider {
+  width: 1px;
+  height: 13px;
+  background: rgba(106, 85, 77, 0.22);
+}
+
 .presence-pill__dot {
   width: 7px;
   height: 7px;
@@ -330,6 +342,10 @@ body[data-theme="dark"] .presence-pill {
   border-color: rgba(255, 64, 129, 0.2);
   background: rgba(255, 64, 129, 0.08);
   color: var(--text-muted);
+}
+
+body[data-theme="dark"] .presence-pill__divider {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .navbar__menu-toggle {
@@ -1320,25 +1336,23 @@ body[data-theme="dark"] .hero__actions .btn--outline {
 .processing-steps {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 0;
   list-style: none;
-  padding-left: 6px;
+  padding-left: 0;
 }
 
 .processing-step {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
   position: relative;
-  padding-bottom: 12px;
+  min-height: 64px;
+  padding: 0 0 18px 34px;
 }
 
 .processing-step::before {
   content: '';
   position: absolute;
-  left: 5px;
-  top: 18px;
-  bottom: 0;
+  left: 8px;
+  top: 22px;
+  bottom: -2px;
   width: 1px;
   background: var(--border-color);
 }
@@ -1353,13 +1367,14 @@ body[data-theme="dark"] .hero__actions .btn--outline {
 
 .processing-step::after {
   content: '';
+  position: absolute;
+  left: 2px;
+  top: 5px;
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: var(--border-color);
   border: 2px solid #fffaf3;
-  margin-top: 5px;
-  flex-shrink: 0;
   z-index: 2;
   transition: var(--transition-fast);
 }
@@ -3220,7 +3235,8 @@ body[data-theme="dark"] .reveal-modal__overlay {
     grid-template-columns: 1fr;
   }
 
-  .presence-pill span:last-child {
+  .presence-pill__group--active,
+  .presence-pill__divider {
     display: none;
   }
   

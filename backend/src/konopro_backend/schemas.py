@@ -54,6 +54,9 @@ class PresenceHeartbeatResponse(BaseModel):
     visitor_id: str
     active_visitor_count: int
     active_window_s: int
+    queued_scoring_count: int
+    processing_scoring_count: int
+    pending_scoring_count: int
 
 
 class AudioSessionResponse(BaseModel):

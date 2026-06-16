@@ -36,6 +36,9 @@ def test_presence_heartbeat_counts_active_visitors(tmp_path):
 
     assert first.status_code == 200
     assert first.json()["active_visitor_count"] == 1
+    assert first.json()["queued_scoring_count"] == 0
+    assert first.json()["processing_scoring_count"] == 0
+    assert first.json()["pending_scoring_count"] == 0
     assert second.status_code == 200
     assert second.json()["active_visitor_count"] == 2
     assert repeat.status_code == 200

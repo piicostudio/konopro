@@ -41,8 +41,13 @@
       <div class="navbar__actions">
         <div class="presence-pill" id="presencePill" aria-live="polite">
           <span class="presence-pill__dot" aria-hidden="true"></span>
-          <span id="presenceCount">--</span>
-          <span>체험 중</span>
+          <span class="presence-pill__group presence-pill__group--active">
+            <span id="presenceCount">--</span>명 체험 중
+          </span>
+          <span class="presence-pill__divider" aria-hidden="true"></span>
+          <span class="presence-pill__group">
+            <span id="queueWaitingCount">0</span>명 대기 중
+          </span>
         </div>
         <button class="navbar__menu-toggle" id="menuToggle" type="button" aria-label="메뉴 열기" aria-controls="primaryNav" aria-expanded="false">
           <span></span>

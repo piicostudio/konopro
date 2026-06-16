@@ -73,6 +73,7 @@
       healthStatus: document.getElementById("healthStatus"),
       presencePill: document.getElementById("presencePill"),
       presenceCount: document.getElementById("presenceCount"),
+      queueWaitingCount: document.getElementById("queueWaitingCount"),
       apiBaseUrl: document.getElementById("apiBaseUrl"),
       betaUserKey: document.getElementById("betaUserKey"),
       googleDbUrl: document.getElementById("googleDbUrl"),
@@ -172,12 +173,18 @@
       .then(parseResponse)
       .then(function (payload) {
         elements.presenceCount.textContent = String(payload.active_visitor_count || 1);
+        if (elements.queueWaitingCount) {
+          elements.queueWaitingCount.textContent = String(payload.queued_scoring_count || 0);
+        }
         if (elements.presencePill) {
           elements.presencePill.dataset.state = "live";
         }
       })
       .catch(function () {
         elements.presenceCount.textContent = "--";
+        if (elements.queueWaitingCount) {
+          elements.queueWaitingCount.textContent = "--";
+        }
         if (elements.presencePill) {
           elements.presencePill.dataset.state = "offline";
         }
@@ -636,8 +643,8 @@
         flowState.processingMode = "queued";
       }
       elements.processingStepTitle.textContent = peopleAhead > 0
-        ? "대기열에서 기다리는 중"
-        : "곧 분석을 시작합니다";
+        ? "앞에 " + peopleAhead + "명 대기 중"
+        : "0명 대기 중";
       elements.processingStepText.textContent = peopleAhead > 0
         ? "앞에 " + peopleAhead + "명이 분석을 기다리고 있어요. 순서가 오면 자동으로 시작됩니다."
         : "현재 앞 순서가 없습니다. 서버가 준비되는 대로 바로 분석을 시작합니다.";
@@ -1333,8 +1340,8 @@
     var peopleAhead = Number(queue.people_ahead_count || 0);
     if (payload.job.status === "queued") {
       return peopleAhead > 0
-        ? "대기 중 · 앞에 " + peopleAhead + "명 · " + source
-        : "대기 중 · 다음 순서 · " + source;
+        ? "앞에 " + peopleAhead + "명 대기 중 · " + source
+        : "0명 대기 중 · 다음 순서 · " + source;
     }
     if (payload.job.status === "processing") {
       return "분석 중 · " + source;

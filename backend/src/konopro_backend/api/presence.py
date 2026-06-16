@@ -4,9 +4,12 @@ import time
 from threading import Lock
 
 from fastapi import APIRouter, Depends, Request
+from sqlmodel import Session
 
 from konopro_backend.config import BackendSettings
-from konopro_backend.dependencies import get_settings
+from konopro_backend.dependencies import get_db, get_settings
+from konopro_backend.models import JobStatus
+from konopro_backend.repositories import count_jobs_by_status, count_pending_jobs
 from konopro_backend.schemas import PresenceHeartbeatRequest, PresenceHeartbeatResponse
 
 router = APIRouter(prefix="/v1/presence", tags=["presence"])
@@ -16,6 +19,7 @@ router = APIRouter(prefix="/v1/presence", tags=["presence"])
 def heartbeat_presence(
     payload: PresenceHeartbeatRequest,
     request: Request,
+    db: Session = Depends(get_db),
     settings: BackendSettings = Depends(get_settings),
 ) -> PresenceHeartbeatResponse:
     now = time.time()
@@ -29,10 +33,15 @@ def heartbeat_presence(
             visitors.pop(visitor_id, None)
         active_count = len(visitors)
 
+    queued_scoring_count = count_jobs_by_status(db, JobStatus.queued, "reference_scoring")
+    processing_scoring_count = count_jobs_by_status(db, JobStatus.processing, "reference_scoring")
     return PresenceHeartbeatResponse(
         visitor_id=payload.visitor_id,
         active_visitor_count=active_count,
         active_window_s=active_window_s,
+        queued_scoring_count=queued_scoring_count,
+        processing_scoring_count=processing_scoring_count,
+        pending_scoring_count=count_pending_jobs(db, "reference_scoring"),
     )
 
 
