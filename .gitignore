@@ -21,6 +21,9 @@ node_modules/
 dist/
 .vercel/
 
+# Local demo audio assets are intentionally not committed.
+web/assets/*.mp3
+
 # Local Python environments created inside the research prototype.
 research/.venv/
 

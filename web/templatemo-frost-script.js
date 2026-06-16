@@ -19,6 +19,11 @@
   
   var defaultApiBaseUrl = "https://jockstrap-passion-obtrusive.ngrok-free.dev";
   var defaultGoogleDbUrl = "https://script.google.com/macros/s/AKfycbw2aSa60f7B-wMBQlspwdNHi8w2iHTQ-tLouwVdMP7ddPomE_TYBPcM1iNQgRHpeLyoYw/exec";
+  var sampleDemo = {
+    referenceUrl: "https://www.youtube.com/watch?v=ZuXCLVCztE4",
+    audioPath: "assets/demo-current-take.mp3",
+    fileName: "장범준 3집 노래방에서 노래방에서 Cover.mp3"
+  };
   var storageKeys = {
     apiBaseUrl: "konopro.apiBaseUrl",
     betaUserKey: "konopro.betaUserKey",
@@ -130,6 +135,10 @@
       takeAudioPlayer: document.getElementById("takeAudioPlayer"),
       takeFileName: document.getElementById("takeFileName"),
       takeFileSize: document.getElementById("takeFileSize"),
+      referencePreviewPanel: document.getElementById("referencePreviewPanel"),
+      referencePreviewEmbed: document.getElementById("referencePreviewEmbed"),
+      referencePreviewLink: document.getElementById("referencePreviewLink"),
+      sampleDemoButton: document.getElementById("sampleDemoButton"),
       submitButton: document.getElementById("submitButton"),
       clearButton: document.getElementById("clearButton"),
       
@@ -520,6 +529,11 @@
 
     elements.healthCheckButton.addEventListener("click", checkHealth);
     elements.analysisForm.addEventListener("submit", handleDirectFormSubmit);
+    elements.youtubeUrl.addEventListener("input", updateReferencePreview);
+    elements.youtubeUrl.addEventListener("change", updateReferencePreview);
+    if (elements.sampleDemoButton) {
+      elements.sampleDemoButton.addEventListener("click", handleSampleDemoClick);
+    }
     elements.clearButton.addEventListener("click", resetScoringUi);
     elements.apiBaseUrl.addEventListener("change", persistSettings);
     elements.betaUserKey.addEventListener("change", persistSettings);
@@ -536,7 +550,17 @@
       });
     }
 
-    initAudioPicker({
+    initAudioPicker(takeAudioPickerConfig());
+
+    initProcessingSurvey();
+    renderProcessingStages();
+    resetProcessingSurvey();
+    setProcessingStage(0, "idle");
+    transitionRightColumn("empty");
+  }
+
+  function takeAudioPickerConfig() {
+    return {
       key: "take",
       card: elements.takeAudioCard,
       input: elements.takeAudio,
@@ -545,13 +569,33 @@
       player: elements.takeAudioPlayer,
       fileName: elements.takeFileName,
       fileSize: elements.takeFileSize
-    });
+    };
+  }
 
-    initProcessingSurvey();
-    renderProcessingStages();
-    resetProcessingSurvey();
-    setProcessingStage(0, "idle");
-    transitionRightColumn("empty");
+  function updateReferencePreview() {
+    if (!elements.referencePreviewPanel || !elements.referencePreviewEmbed || !elements.referencePreviewLink) return "";
+
+    var url = elements.youtubeUrl.value.trim();
+    var videoId = extractYoutubeVideoId(url);
+    if (!videoId) {
+      hideReferencePreview();
+      return "";
+    }
+
+    var embedUrl = youtubeEmbedUrl(videoId);
+    if (elements.referencePreviewEmbed.getAttribute("src") !== embedUrl) {
+      elements.referencePreviewEmbed.src = embedUrl;
+    }
+    elements.referencePreviewLink.href = url;
+    elements.referencePreviewPanel.classList.remove("is-hidden");
+    return videoId;
+  }
+
+  function hideReferencePreview() {
+    if (!elements.referencePreviewPanel || !elements.referencePreviewEmbed || !elements.referencePreviewLink) return;
+    elements.referencePreviewPanel.classList.add("is-hidden");
+    elements.referencePreviewEmbed.removeAttribute("src");
+    elements.referencePreviewLink.href = "#";
   }
 
   function handleDirectFormSubmit(event) {
@@ -578,6 +622,7 @@
 
     flowState.youtubeUrl = url;
     flowState.youtubeVideoId = videoId;
+    updateReferencePreview();
     flowState.analysisReady = false;
     flowState.analysisFailed = false;
     flowState.scoringRun = null;
@@ -624,6 +669,56 @@
           message: error.message
         });
         transitionRightColumn("processing");
+      });
+  }
+
+  function handleSampleDemoClick() {
+    if (!elements.sampleDemoButton || elements.sampleDemoButton.disabled) return;
+
+    var submitted = false;
+    persistSettings();
+    elements.sampleDemoButton.disabled = true;
+    elements.youtubeUrl.value = sampleDemo.referenceUrl;
+    updateReferencePreview();
+    setJobStatus("샘플 녹음을 불러오는 중...", "working");
+
+    fetch(sampleDemo.audioPath, { cache: "no-store" })
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error("샘플 녹음 파일을 찾을 수 없습니다. web/assets/demo-current-take.mp3를 확인하세요.");
+        }
+        return response.blob();
+      })
+      .then(function (blob) {
+        var file = new File([blob], sampleDemo.fileName, {
+          type: blob.type || "audio/mpeg",
+          lastModified: Date.now()
+        });
+        if (!assignFileToInput(elements.takeAudio, file)) {
+          throw new Error("현재 브라우저에서 샘플 파일을 자동 입력할 수 없습니다.");
+        }
+
+        updateAudioPreview(takeAudioPickerConfig());
+        setJobStatus("샘플 입력 완료. 분석을 시작합니다...", "working");
+        trackEvent("click_sampledemo_analysis", "site_MVP", {
+          youtube_video_id: extractYoutubeVideoId(sampleDemo.referenceUrl),
+          file_name: sampleDemo.fileName
+        });
+
+        submitted = true;
+        if (elements.analysisForm.requestSubmit) {
+          elements.analysisForm.requestSubmit(elements.submitButton);
+        } else {
+          elements.analysisForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+        }
+      })
+      .catch(function (error) {
+        setJobStatus(error.message || "샘플 분석을 시작할 수 없습니다.", "error");
+      })
+      .finally(function () {
+        if (!submitted && elements.sampleDemoButton) {
+          elements.sampleDemoButton.disabled = false;
+        }
       });
   }
 
@@ -934,6 +1029,7 @@
       elements.resultYoutubeLink.href = flowState.youtubeUrl;
       elements.resultYoutubeLink.textContent = flowState.youtubeUrl;
     }
+    hideReferencePreview();
 
     if (elements.playbackPreviewPanel) {
       elements.playbackPreviewPanel.classList.remove("is-hidden");
@@ -1552,17 +1648,9 @@
     elements.betaUserKey.value = localStorage.getItem(storageKeys.betaUserKey) || defaultTesterId();
     elements.googleDbUrl.value = localStorage.getItem(storageKeys.googleDbUrl) || defaultGoogleDbUrl;
     elements.youtubeUrl.value = "";
+    hideReferencePreview();
     
-    resetAudioPicker({
-      key: "take",
-      card: elements.takeAudioCard,
-      input: elements.takeAudio,
-      meta: elements.takeFileMeta,
-      preview: elements.takeAudioPreview,
-      player: elements.takeAudioPlayer,
-      fileName: elements.takeFileName,
-      fileSize: elements.takeFileSize
-    });
+    resetAudioPicker(takeAudioPickerConfig());
     
     flowState = createInitialFlowState();
     activeSessionId = null;
@@ -1655,6 +1743,7 @@
   function setBusy(isBusy) {
     elements.submitButton.disabled = isBusy;
     elements.clearButton.disabled = isBusy;
+    if (elements.sampleDemoButton) elements.sampleDemoButton.disabled = isBusy;
   }
 
   function setHealth(message, state) {

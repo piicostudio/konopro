@@ -75,7 +75,7 @@
           방금 부른 노래,<br><em>늘었는지 안 늘었는지 <span class="hero__nowrap">알려드릴게요.</span></em>
         </h1>
         <p class="hero__subtitle reveal">
-          코인 노래방을 내 보컬 스튜디오로. 녹음만 하면, 원곡 대비 피치와 지난 연습 대비 성장을 자동 분석합니다.
+          코인 노래방녹음만 하면, 원곡 대비 개선점을 짚어드립니다.
         </p>
         <div class="hero__actions reveal">
           <a href="#analyze" class="btn btn--primary js-track-cta" data-event="click_hero_trydemo" data-section="site_hero">분석 체험하기</a>
@@ -234,6 +234,16 @@
                   </div>
                 </div>
 
+                <div class="reference-preview is-hidden" id="referencePreviewPanel">
+                  <div class="reference-preview__header">
+                    <span class="section__label">원곡 미리보기</span>
+                    <a class="reference-preview__link" id="referencePreviewLink" href="#" target="_blank" rel="noopener">YouTube에서 열기</a>
+                  </div>
+                  <div class="youtube-embed youtube-embed--input">
+                    <iframe id="referencePreviewEmbed" title="YouTube 원곡 미리보기" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+                  </div>
+                </div>
+
                 <!-- Playback previews stay visible so users can stop/seek A/B playback -->
                 <div class="result-players-grid playback-preview-panel is-hidden" id="playbackPreviewPanel">
                   <article class="result-card result-card--upload">
@@ -279,16 +289,17 @@
               
               <!-- State A: Empty State -->
               <div class="analysis-result__empty" id="emptyResult">
-                <div class="empty-state-visual">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h3l2-6 4 12 2-6h5"></path><path d="M4 19h16"></path></svg>
+                <div class="empty-state-sample">
+                  <p class="empty-state-sample__copy">혹시 노래방 녹음이 없으실까요? 준비해 둔 샘플 녹음으로 먼저 체험해보세요.</p>
+                  <button class="btn btn--sample btn--sample-hero" type="button" id="sampleDemoButton">
+                    샘플로 바로 체험하기
+                  </button>
+                  <p class="empty-state-sample__credit">
+                    샘플 출처:
+                    <a href="https://www.youtube.com/watch?v=mM7aZlpqx7U" target="_blank" rel="noopener">YouTube 참고 영상</a>
+                    · 콘텐츠 권리는 원저작자에게 있습니다.
+                  </p>
                 </div>
-                <h3 class="empty-state-title">분석 결과 대기 중</h3>
-                  <p class="empty-state-desc">왼쪽 패널에 유튜브 링크와 목소리 파일을 업로드한 뒤 '분석 시작하기'를 누르면 이곳에 정밀 보고서가 렌더링됩니다.</p>
-                  <div class="empty-state-preview" aria-hidden="true">
-                    <span>종합 점수</span>
-                    <span>문제 구간 2개</span>
-                    <span>A/B 재생</span>
-                  </div>
               </div>
 
               <!-- State B: Processing Timeline / Loading Progress -->
