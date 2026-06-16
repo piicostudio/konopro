@@ -19,9 +19,9 @@
   
   <link rel="stylesheet" href="templatemo-frost-style.css">
 </head>
-<body class="dark-theme">
+<body data-theme="light">
 
-  <!-- Vanta background container -->
+  <!-- Photo atmosphere background hook -->
   <div id="vanta-bg"></div>
 
   <!-- Sticky Glassmorphic Navbar -->
@@ -36,6 +36,10 @@
         <a href="#analyze" class="navbar__link navbar__link--cta">데모 체험하기</a>
       </nav>
       <div class="navbar__actions">
+        <button class="theme-toggle" id="themeToggle" type="button" aria-label="다크 모드로 전환" aria-pressed="false">
+          <svg class="theme-toggle__icon theme-toggle__icon--sun" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path></svg>
+          <svg class="theme-toggle__icon theme-toggle__icon--moon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 7.5A9 9 0 1 1 12 3Z"></path></svg>
+        </button>
         <button class="settings-button-nav" id="settingsButton" aria-label="Settings" aria-haspopup="dialog" aria-expanded="false">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
         </button>
@@ -71,6 +75,9 @@
 
       <div class="evidence-grid">
         <article class="evidence-card reveal">
+          <figure class="evidence-card__media">
+            <img src="images/a_celebration_scene_in_a_cozy_coin_noraebang_karaoke_booth._a_group_of_korean.png" alt="코인 노래방에서 노래를 부르는 장면" loading="lazy">
+          </figure>
           <div class="evidence-card__icon">🎲</div>
           <div class="evidence-card__label">±랜덤</div>
           <h3 class="evidence-card__title">코노 점수는 실력을 말하지 않습니다</h3>
@@ -78,6 +85,9 @@
         </article>
 
         <article class="evidence-card reveal">
+          <figure class="evidence-card__media">
+            <img src="images/a_simple_clean_infographic_diagram_showing_microphone_latency._on_the_left_a.png" alt="마이크 지연을 설명하는 간단한 다이어그램" loading="lazy">
+          </figure>
           <div class="evidence-card__icon">🎤</div>
           <div class="evidence-card__label">+0.3s</div>
           <h3 class="evidence-card__title">내 목소리는 뒤늦게 돌아옵니다</h3>
@@ -85,6 +95,9 @@
         </article>
 
         <article class="evidence-card reveal">
+          <figure class="evidence-card__media">
+            <img src="images/music-technology-guitar-microphone-studio-amplifier-846852-pxhere.com.jpg" alt="스튜디오 마이크와 음악 장비" loading="lazy">
+          </figure>
           <div class="evidence-card__icon">💸</div>
           <div class="evidence-card__label">₩15,000/hr</div>
           <h3 class="evidence-card__title">정확한 피드백은 비쌉니다</h3>
@@ -231,7 +244,7 @@
               <!-- State A: Empty State -->
               <div class="analysis-result__empty" id="emptyResult">
                 <div class="empty-state-visual">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h3l2-6 4 12 2-6h5"></path><path d="M4 19h16"></path></svg>
                 </div>
                 <h3 class="empty-state-title">분석 결과 대기 중</h3>
                 <p class="empty-state-desc">왼쪽 패널에 유튜브 링크와 목소리 파일을 업로드한 뒤 '분석 시작하기'를 누르면 이곳에 정밀 보고서가 렌더링됩니다.</p>

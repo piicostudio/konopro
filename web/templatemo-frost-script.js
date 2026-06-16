@@ -17,6 +17,7 @@
     apiBaseUrl: "konopro.apiBaseUrl",
     betaUserKey: "konopro.betaUserKey",
     googleDbUrl: "konopro.googleDbUrl",
+    theme: "konopro.theme",
     analyticsSessionId: "konopro.analyticsSessionId",
     analyticsQueue: "konopro.analyticsQueue"
   };
@@ -42,6 +43,7 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     cacheElements();
+    initTheme();
     initVantaBackground();
     initStoredSettings();
     initLandingInteractions();
@@ -52,6 +54,7 @@
 
   function cacheElements() {
     elements = {
+      themeToggle: document.getElementById("themeToggle"),
       settingsButton: document.getElementById("settingsButton"),
       settingsModal: document.getElementById("settingsModal"),
       modal: document.getElementById("revealModal"),
@@ -127,6 +130,16 @@
   }
 
   function initVantaBackground() {
+    var isDarkTheme = document.body.getAttribute("data-theme") === "dark";
+
+    if (!isDarkTheme && vantaInstance && typeof vantaInstance.destroy === "function") {
+      vantaInstance.destroy();
+      vantaInstance = null;
+      return;
+    }
+
+    if (!isDarkTheme || vantaInstance) return;
+
     if (window.VANTA && window.VANTA.NET) {
       vantaInstance = window.VANTA.NET({
         el: "#vanta-bg",
@@ -137,13 +150,38 @@
         minWidth: 200.0,
         scale: 1.0,
         scaleMobile: 1.0,
-        color: 0x8b5cf6, // Violet
-        backgroundColor: 0x09090b, // Zinc 950
+        color: 0xff4081,
+        backgroundColor: 0x09090b,
         points: 8.0,
         maxDistance: 20.0,
         spacing: 16.0
       });
     }
+  }
+
+  function initTheme() {
+    var storedTheme = localStorage.getItem(storageKeys.theme);
+    var theme = storedTheme === "dark" ? "dark" : "light";
+    applyTheme(theme);
+
+    if (!elements.themeToggle) return;
+
+    elements.themeToggle.addEventListener("click", function () {
+      var nextTheme = document.body.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      applyTheme(nextTheme);
+      localStorage.setItem(storageKeys.theme, nextTheme);
+      initVantaBackground();
+    });
+  }
+
+  function applyTheme(theme) {
+    document.body.setAttribute("data-theme", theme);
+
+    if (!elements.themeToggle) return;
+
+    var isDarkTheme = theme === "dark";
+    elements.themeToggle.setAttribute("aria-pressed", String(isDarkTheme));
+    elements.themeToggle.setAttribute("aria-label", isDarkTheme ? "라이트 모드로 전환" : "다크 모드로 전환");
   }
 
   function initEntranceAnimations() {
