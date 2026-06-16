@@ -11,6 +11,7 @@ from konopro_research.contour_scoring import (
     score_take_against_reference_contour_global_offset,
 )
 from konopro_research.demo_data import synthesize_take
+from konopro_research.loudness import normalize_active_rms_file
 from konopro_research.matching import (
     build_demo_section_catalog,
     match_query_to_sections,
@@ -267,6 +268,33 @@ def test_demucs_no_vocals_stem_is_supported(tmp_path, monkeypatch) -> None:
     assert result.used_original is False
     assert result.stem == "no_vocals"
     assert result.analysis_path.name == "no_vocals.wav"
+
+
+def test_active_rms_normalization_targets_active_frames_and_uses_cache(tmp_path) -> None:
+    sample_rate = 22050
+    silence = np.zeros(sample_rate // 2, dtype=np.float32)
+    tone = 0.02 * np.sin(2.0 * np.pi * 220.0 * np.arange(sample_rate) / sample_rate).astype(np.float32)
+    path = tmp_path / "quiet_take.wav"
+    write_wav(path, np.concatenate([silence, tone]), sample_rate)
+
+    result = normalize_active_rms_file(
+        path,
+        cache_dir=tmp_path / "cache",
+        target_rms=0.08,
+        active_percentile=60.0,
+    )
+    cached = normalize_active_rms_file(
+        path,
+        cache_dir=tmp_path / "cache",
+        target_rms=0.08,
+        active_percentile=60.0,
+    )
+
+    assert result.analysis_path.exists()
+    assert result.active_rms_before < result.active_rms_after
+    assert abs(result.active_rms_after - 0.08) < 0.002
+    assert cached.used_cache is True
+    assert cached.analysis_path == result.analysis_path
 
 
 def contour_from_baseline(

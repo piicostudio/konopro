@@ -37,6 +37,13 @@ class BackendSettings(BaseSettings):
     )
     reference_download_tool: str = "yt-dlp"
     reference_fetch_timeout_s: float = 180.0
+    reference_scoring_use_demucs: bool = True
+    reference_scoring_demucs_model: str = "htdemucs"
+    reference_scoring_demucs_device: str | None = None
+    reference_scoring_demucs_timeout_s: int = 1800
+    reference_scoring_use_active_rms: bool = True
+    reference_scoring_target_active_rms: float = 0.08
+    reference_scoring_active_rms_percentile: float = 60.0
 
     model_config = SettingsConfigDict(
         env_file=".env",

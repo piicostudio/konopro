@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from sqlmodel import Session
@@ -14,13 +16,58 @@ from konopro_backend.repositories import (
     update_reference_scoring_run,
 )
 from konopro_backend.storage import LocalAudioStorage
-from konopro_research.contour_scoring import score_take_against_reference_contour
+from konopro_research.contour_scoring import score_take_against_reference_contour_global_offset
+from konopro_research.loudness import ActiveRmsNormalizationResult, normalize_active_rms_file
 from konopro_research.reference_audio import extract_reference_audio
 from konopro_research.scoring import ScoreResult
+from konopro_research.separation import SeparationResult, prepare_vocal_analysis_audio
+
+
+PITCH_KWARGS = {
+    "fmin_hz": 80.0,
+    "fmax_hz": 1000.0,
+    "frame_length": 2048,
+    "hop_length": 256,
+}
+CLEAN_KWARGS = {
+    "min_confidence": 0.25,
+    "max_jump_cents": 700.0,
+    "correct_octaves": True,
+}
+CONTOUR_SCORE_KWARGS = {
+    "pitch_kwargs": PITCH_KWARGS,
+    "clean_kwargs": CLEAN_KWARGS,
+    "dtw_time_weight": 20.0,
+    "dtw_band_radius": 0.06,
+    "max_dtw_frames": 2400,
+    "pitch_error_penalty": 0.70,
+    "stability_penalty": 0.20,
+    "timing_penalty": 90.0,
+    "transposition_warning_cents": 90.0,
+}
 
 
 class ReferenceFetchError(RuntimeError):
     """Raised when a reference track cannot be acquired."""
+
+
+@dataclass(frozen=True)
+class AnalysisAudio:
+    analysis_path: Path
+    separation: SeparationResult
+    loudness: ActiveRmsNormalizationResult | None
+
+    @property
+    def warnings(self) -> tuple[str, ...]:
+        loudness_warnings = self.loudness.warnings if self.loudness is not None else ()
+        return (*self.separation.warnings, *loudness_warnings)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "analysis_path": str(self.analysis_path),
+            "separation": self.separation.to_dict(),
+            "active_rms": self.loudness.to_dict() if self.loudness is not None else None,
+        }
 
 
 class YoutubeReferenceFetcher:
@@ -142,11 +189,21 @@ class ReferenceScoringProcessor:
             raise FileNotFoundError(f"Stored take audio file not found: {audio_session.storage_key}")
 
         reference_path = self._reference_path(scoring_run)
-        reference = extract_reference_audio(reference_path, title="Reference song")
-        score = score_take_against_reference_contour(
-            take_path,
+        reference_audio = self._prepare_analysis_audio(reference_path, slot="reference")
+        take_audio = self._prepare_analysis_audio(take_path, slot="take")
+
+        reference = extract_reference_audio(
+            reference_audio.analysis_path,
+            title="Reference song",
+            pitch_kwargs=PITCH_KWARGS,
+            clean_kwargs=CLEAN_KWARGS,
+        )
+        score = score_take_against_reference_contour_global_offset(
+            take_audio.analysis_path,
             reference.contour,
             name=audio_session.original_filename,
+            take_audio_path=take_audio.analysis_path,
+            **CONTOUR_SCORE_KWARGS,
         )
         warnings = list(
             dict.fromkeys(
@@ -154,6 +211,8 @@ class ReferenceScoringProcessor:
                     *score.warnings,
                     *reference.audio_summary.warnings,
                     *reference.quality.warnings,
+                    *reference_audio.warnings,
+                    *take_audio.warnings,
                 ]
             )
         )
@@ -163,10 +222,56 @@ class ReferenceScoringProcessor:
                 "source": scoring_run.reference_source,
                 "audio": reference.audio_summary.to_dict(),
                 "quality": reference.quality.to_dict(),
+                "preprocessing": {
+                    "reference": reference_audio.to_dict(),
+                    "take": take_audio.to_dict(),
+                    "scoring_method": "global_offset_1_to_1_contour",
+                    "pitch_kwargs": PITCH_KWARGS,
+                    "clean_kwargs": CLEAN_KWARGS,
+                    "score_kwargs": {
+                        key: value
+                        for key, value in CONTOUR_SCORE_KWARGS.items()
+                        if key not in {"pitch_kwargs", "clean_kwargs"}
+                    },
+                },
             },
             "feedback": _practice_feedback(score),
             "warnings": warnings,
         }
+
+    def _prepare_analysis_audio(self, path: Path, *, slot: str) -> AnalysisAudio:
+        analysis_cache_dir = self.settings.processing_path / "_cache" / "reference_scoring"
+        separation = prepare_vocal_analysis_audio(
+            path,
+            cache_dir=analysis_cache_dir,
+            backend="demucs" if self.settings.reference_scoring_use_demucs else "none",
+            stem="vocals",
+            model=self.settings.reference_scoring_demucs_model,
+            device=self._demucs_device(),
+            shifts=1,
+            overlap=0.25,
+            timeout_s=self.settings.reference_scoring_demucs_timeout_s,
+        )
+        analysis_path = separation.analysis_path
+        loudness: ActiveRmsNormalizationResult | None = None
+        if self.settings.reference_scoring_use_active_rms:
+            loudness = normalize_active_rms_file(
+                analysis_path,
+                cache_dir=analysis_cache_dir / slot,
+                target_rms=self.settings.reference_scoring_target_active_rms,
+                active_percentile=self.settings.reference_scoring_active_rms_percentile,
+            )
+            analysis_path = loudness.analysis_path
+        return AnalysisAudio(
+            analysis_path=analysis_path,
+            separation=separation,
+            loudness=loudness,
+        )
+
+    def _demucs_device(self) -> str:
+        if self.settings.reference_scoring_demucs_device:
+            return self.settings.reference_scoring_demucs_device
+        return _default_demucs_device()
 
     def _reference_path(self, scoring_run: ReferenceScoringRun) -> Path:
         if scoring_run.reference_storage_key:
@@ -179,6 +284,15 @@ class ReferenceScoringProcessor:
 
         output_dir = self.settings.processing_path / scoring_run.session_id / scoring_run.job_id
         return self.fetcher.fetch(scoring_run.youtube_url, output_dir)
+
+
+def _default_demucs_device() -> str:
+    try:
+        import torch
+
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
 
 
 def _practice_feedback(score: ScoreResult) -> list[str]:

@@ -89,7 +89,7 @@ def prepare_vocal_analysis_audio(
             stem=stem,
             model=model,
             device=device,
-            warning="Demucs is not installed; install with `uv sync --extra stems` and restart Streamlit.",
+            warning="Demucs is not installed; install with `uv sync --extra stems` and restart the app.",
         )
 
     cache_dir = Path(cache_dir)

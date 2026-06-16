@@ -18,6 +18,9 @@ dev = [
   "pytest>=8.2",
   "ruff>=0.5",
 ]
+stems = [
+  "konopro-research[stems]",
+]
 
 [project.scripts]
 konopro-worker = "konopro_backend.worker:main"
